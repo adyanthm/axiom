@@ -16,111 +16,61 @@
       <div class="menu-item" data-menu="file">
         <span class="menu-label">File</span>
         <div class="menu-dropdown" id="menu-file">
-          <div class="menu-entry" data-action="new-file">
-            <span>New File</span><span class="menu-shortcut">Ctrl+N</span>
+          <div class="menu-entry" data-action="new-file"><span>New File</span><span class="menu-shortcut">Ctrl+N</span>
           </div>
-          <div class="menu-entry" data-action="new-project">
-            <span>New Project...</span>
+          <div class="menu-entry" data-action="new-folder"><span>New Folder</span></div>
+          <div class="menu-separator"></div>
+          <div class="menu-entry" data-action="open-folder"><span>Open Folder...</span><span
+              class="menu-shortcut">Ctrl+K Ctrl+O</span></div>
+          <div class="menu-separator"></div>
+          <div class="menu-entry" data-action="save-file"><span>Save</span><span class="menu-shortcut">Ctrl+S</span>
           </div>
           <div class="menu-separator"></div>
-          <div class="menu-entry" data-action="open-file">
-            <span>Open File...</span><span class="menu-shortcut">Ctrl+O</span>
-          </div>
-          <div class="menu-entry" data-action="open-folder">
-            <span>Open Folder...</span><span class="menu-shortcut">Ctrl+K Ctrl+O</span>
-          </div>
-          <div class="menu-entry" data-action="open-recent">
-            <span>Open Recent...</span>
-          </div>
+          <div class="menu-entry" data-action="close-editor"><span>Close Editor</span><span
+              class="menu-shortcut">Ctrl+W</span></div>
           <div class="menu-separator"></div>
-          <div class="menu-entry" data-action="close-editor">
-            <span>Close Editor</span><span class="menu-shortcut">Ctrl+W</span>
-          </div>
-          <div class="menu-separator"></div>
-          <div class="menu-entry" data-action="refresh-explorer">
-            <span>Refresh Explorer</span>
-          </div>
+          <div class="menu-entry" data-action="refresh-explorer"><span>Refresh Explorer</span></div>
         </div>
       </div>
       <div class="menu-item" data-menu="edit">
         <span class="menu-label">Edit</span>
         <div class="menu-dropdown" id="menu-edit">
-          <div class="menu-entry" data-action="undo">
-            <span>Undo</span><span class="menu-shortcut">Ctrl+Z</span>
-          </div>
-          <div class="menu-entry" data-action="redo">
-            <span>Redo</span><span class="menu-shortcut">Ctrl+Y</span>
-          </div>
+          <div class="menu-entry" data-action="undo"><span>Undo</span><span class="menu-shortcut">Ctrl+Z</span></div>
+          <div class="menu-entry" data-action="redo"><span>Redo</span><span class="menu-shortcut">Ctrl+Y</span></div>
           <div class="menu-separator"></div>
-          <div class="menu-entry" data-action="cut">
-            <span>Cut</span><span class="menu-shortcut">Ctrl+X</span>
-          </div>
-          <div class="menu-entry" data-action="copy">
-            <span>Copy</span><span class="menu-shortcut">Ctrl+C</span>
-          </div>
-          <div class="menu-entry" data-action="paste">
-            <span>Paste</span><span class="menu-shortcut">Ctrl+V</span>
-          </div>
+          <div class="menu-entry" data-action="cut"><span>Cut</span><span class="menu-shortcut">Ctrl+X</span></div>
+          <div class="menu-entry" data-action="copy"><span>Copy</span><span class="menu-shortcut">Ctrl+C</span></div>
+          <div class="menu-entry" data-action="paste"><span>Paste</span><span class="menu-shortcut">Ctrl+V</span></div>
           <div class="menu-separator"></div>
-          <div class="menu-entry" data-action="find">
-            <span>Find</span><span class="menu-shortcut">Ctrl+F</span>
-          </div>
-          <div class="menu-entry" data-action="replace">
-            <span>Replace</span><span class="menu-shortcut">Ctrl+H</span>
-          </div>
-        </div>
-      </div>
-      <div class="menu-item" data-menu="selection">
-        <span class="menu-label">Selection</span>
-        <div class="menu-dropdown" id="menu-selection">
-          <div class="menu-entry" data-action="select-all">
-            <span>Select All</span><span class="menu-shortcut">Ctrl+A</span>
-          </div>
-          <div class="menu-separator"></div>
-          <div class="menu-entry" data-action="add-cursor-next">
-            <span>Add Next Occurrence</span><span class="menu-shortcut">Ctrl+D</span>
+          <div class="menu-entry" data-action="find"><span>Find</span><span class="menu-shortcut">Ctrl+F</span></div>
+          <div class="menu-entry" data-action="replace"><span>Replace</span><span class="menu-shortcut">Ctrl+H</span>
           </div>
         </div>
       </div>
       <div class="menu-item" data-menu="view">
         <span class="menu-label">View</span>
         <div class="menu-dropdown" id="menu-view">
-          <div class="menu-entry" data-action="command-palette">
-            <span>Command Palette</span><span class="menu-shortcut">Ctrl+Shift+P</span>
-          </div>
+          <div class="menu-entry" data-action="command-palette"><span>Command Palette</span><span
+              class="menu-shortcut">Ctrl+Shift+P</span></div>
           <div class="menu-separator"></div>
-          <div class="menu-entry" data-action="keyboard-shortcuts">
-            <span>Keyboard Shortcuts</span><span class="menu-shortcut">Ctrl+K Ctrl+S</span>
-          </div>
+          <div class="menu-entry" data-action="keyboard-shortcuts"><span>Keyboard Shortcuts</span><span
+              class="menu-shortcut">Ctrl+K Ctrl+S</span></div>
           <div class="menu-separator"></div>
-          <div class="menu-entry" data-action="toggle-glow">
-            <span>Toggle Neon Glow</span><span class="menu-shortcut">Ctrl+Alt+G</span>
-          </div>
-          <div class="menu-entry" data-action="toggle-rgb-glow">
-            <span>Toggle RGB Glow</span><span class="menu-shortcut">Ctrl+Alt+R</span>
-          </div>
-          <div class="menu-entry" data-action="toggle-rgb-text">
-            <span>Toggle RGB Text</span><span class="menu-shortcut">Ctrl+Alt+T</span>
-          </div>
-          <div class="menu-entry" data-action="toggle-zoom">
-            <span>Toggle 300% Zoom</span><span class="menu-shortcut">Ctrl+Alt+Z</span>
-          </div>
+          <div class="menu-entry" data-action="toggle-glow"><span>Toggle Neon Glow</span><span
+              class="menu-shortcut">Ctrl+Alt+G</span></div>
+          <div class="menu-entry" data-action="toggle-rgb-glow"><span>Toggle RGB Glow</span><span
+              class="menu-shortcut">Ctrl+Alt+R</span></div>
+          <div class="menu-entry" data-action="toggle-rgb-text"><span>Toggle RGB Text</span><span
+              class="menu-shortcut">Ctrl+Alt+T</span></div>
+          <div class="menu-entry" data-action="toggle-zoom"><span>Toggle 300% Zoom</span><span
+              class="menu-shortcut">Ctrl+Alt+Z</span></div>
         </div>
       </div>
       <div class="menu-item" data-menu="go">
         <span class="menu-label">Go</span>
         <div class="menu-dropdown" id="menu-go">
-          <div class="menu-entry" data-action="go-to-file">
-            <span>Go to File...</span><span class="menu-shortcut">Ctrl+P</span>
-          </div>
-        </div>
-      </div>
-      <div class="menu-item" data-menu="run">
-        <span class="menu-label">Run</span>
-        <div class="menu-dropdown" id="menu-run">
-          <div class="menu-entry" data-action="run-code">
-            <span>Run Code</span><span class="menu-shortcut">F5</span>
-          </div>
+          <div class="menu-entry" data-action="go-to-file"><span>Go to File...</span><span
+              class="menu-shortcut">Ctrl+P</span></div>
         </div>
       </div>
     </div>
@@ -129,12 +79,12 @@
     <div id="main-content">
       <!-- Sidebar -->
       <div id="sidebar" style="width: 250px;">
-        <!-- Sidebar Content -->
         <div id="sidebar-content">
           <div class="sidebar-section">
             <div class="sidebar-section-title">
               <div class="title-left">
-                <i class="fa-solid fa-chevron-down"></i> AXIOM_PROJECT
+                <i class="fa-solid fa-chevron-down"></i>
+                <span id="sidebar-folder-name">AXIOM_PROJECT</span>
               </div>
               <div class="title-actions">
                 <i class="fa-solid fa-file-circle-plus action-icon" id="action-new-file" title="New File"></i>
@@ -143,9 +93,7 @@
                 <i class="fa-solid fa-compress action-icon" id="action-collapse" title="Collapse Folders"></i>
               </div>
             </div>
-            <div class="file-list" id="file-explorer">
-              <!-- Dynamically populated files -->
-            </div>
+            <div class="file-list" id="file-explorer"></div>
           </div>
         </div>
       </div>
@@ -156,52 +104,50 @@
       <!-- Editor Area -->
       <div id="editor-area">
         <div class="editor-header">
-          <div class="tabs" id="tabs-container">
-            <!-- Dynamically populated tabs -->
-          </div>
-          <div class="editor-actions">
-            <button id="run-btn" title="Run Code">
-              <i class="fa-solid fa-play"></i>
-            </button>
-          </div>
+          <div class="tabs" id="tabs-container"></div>
         </div>
-        <!-- Breadcrumbs -->
-        <div class="editor-breadcrumb" id="editor-breadcrumb">
-          <span class="crumb">AxiomIDE_Web</span>
-          <i class="fa-solid fa-chevron-right crumb-separator"></i>
-          <span class="crumb">src</span>
-          <i class="fa-solid fa-chevron-right crumb-separator"></i>
-          <span class="crumb current-file-crumb" id="breadcrumb-current"><i class="fa-brands fa-python"
-              style="color: #4B8BBE; margin-right: 6px;"></i>main.py</span>
+        <div class="editor-breadcrumb" id="editor-breadcrumb"></div>
+        <div id="editor-welcome">
+          <i class="fa-brands fa-python" id="welcome-icon" style="font-size:48px;color:#4B8BBE;opacity:0.3;"></i>
+          <p id="welcome-message">Open a folder to start editing</p>
+          <button id="welcome-open-btn">Open Folder...</button>
         </div>
-        <!-- CodeMirror mounts here -->
         <div id="editor-wrap"></div>
       </div>
     </div>
 
     <!-- Status bar -->
     <div id="statusbar">
-      <span>Python 3.11.0</span>
+      <span id="sb-lang">Python 3</span>
       <span id="sb-cursor">Ln 1, Col 1</span>
       <span class="sep"></span>
       <span id="sb-words">0 words</span>
       <span>UTF-8</span>
     </div>
 
-    <!-- Context Menu -->
-    <div id="context-menu" class="hidden">
-      <div class="context-item" id="ctx-rename">Rename</div>
-      <div class="context-item" id="ctx-delete">Delete</div>
-      <div class="context-item" id="ctx-copy">Copy Path</div>
+    <!-- Context Menu (populated dynamically) -->
+    <div id="context-menu" class="hidden"></div>
+
+    <!-- Save Dialog -->
+    <div id="save-dialog-overlay" class="hidden">
+      <div id="save-dialog">
+        <div class="save-dialog-icon"><i class="fa-solid fa-circle-exclamation"></i></div>
+        <div class="save-dialog-title">Unsaved Changes</div>
+        <div class="save-dialog-message" id="save-dialog-message">Your changes will be lost if you don't save them.
+        </div>
+        <div class="save-dialog-buttons">
+          <button id="save-dialog-save" class="btn-primary">Save</button>
+          <button id="save-dialog-dont-save" class="btn-secondary">Don't Save</button>
+          <button id="save-dialog-cancel" class="btn-ghost">Cancel</button>
+        </div>
+      </div>
     </div>
 
     <!-- Command Palette -->
     <div id="command-palette-overlay">
       <div id="command-palette" aria-modal="true">
         <input type="text" id="command-input" placeholder="Type a command..." autocomplete="off" spellcheck="false" />
-        <div class="palette-list" id="palette-list">
-          <!-- Items injected via JS -->
-        </div>
+        <div class="palette-list" id="palette-list"></div>
       </div>
     </div>
 
@@ -213,9 +159,7 @@
             <i class="fa-solid fa-keyboard" style="margin-right: 8px; color: var(--accent-color);"></i>
             <span class="keymap-title">Keyboard Shortcuts</span>
           </div>
-          <button class="keymap-close-btn" id="keymap-close-btn">
-            <i class="fa-solid fa-xmark"></i>
-          </button>
+          <button class="keymap-close-btn" id="keymap-close-btn"><i class="fa-solid fa-xmark"></i></button>
         </div>
         <div class="keymap-search-bar">
           <i class="fa-solid fa-search" style="color: var(--text-muted); margin-right: 8px;"></i>
@@ -227,9 +171,7 @@
           <span class="keymap-col-keybinding">Keybinding</span>
           <span class="keymap-col-source">Source</span>
         </div>
-        <div class="keymap-table-body" id="keymap-table-body">
-          <!-- rows injected via JS -->
-        </div>
+        <div class="keymap-table-body" id="keymap-table-body"></div>
       </div>
     </div>
   </div>

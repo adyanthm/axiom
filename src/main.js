@@ -7,20 +7,40 @@ import { oneDark } from '@codemirror/theme-one-dark';
 import { autocompletion } from '@codemirror/autocomplete';
 import { searchKeymap, search } from '@codemirror/search';
 
-// ── Dummy Files Storage ────────────────────────────────────────────────────────
-const files = {
-  'main.py': `def greet():
-    print("Hello from Axiom IDE!")
+// ── File System State ──────────────────────────────────────────────────────────
+let rootDirHandle = null;
+let rootName = 'AXIOM_PROJECT';
+const fileHandles = new Map();      // path → FileSystemFileHandle
+const dirHandles  = new Map();      // path → FileSystemDirectoryHandle
+const fileContents = new Map();     // path → string (last-saved content)
+const fileEditorStates = new Map(); // path → EditorState
+const dirtyFiles = new Set();       // paths of unsaved files
+let fileTree = null;                // tree root node
+let expandedDirs = new Set();       // expanded folder paths
+let usingMemory = true;             // true when no real folder is open
 
-greet()
-`
-};
+// In-memory fallback
+const memFiles = {};
+// Seed fileContents with all memory files so dirty tracking works
+Object.entries(memFiles).forEach(([k, v]) => fileContents.set(k, v));
 
-let currentFile = 'main.py';
+let openTabs = [];
+let currentFile = null;
 
-let currentTheme = oneDark;
+// Context state
+let activeContextPath = null;
+let activeContextIsDir = false;
 
-// Build editor state function
+// Inline creator state  { parentPath, type }
+let inlineCreator = null;
+
+// ── CodeMirror Effects Flags ───────────────────────────────────────────────────
+let isZoomEnabled    = false;
+let isGlowEnabled    = false;
+let isRgbGlowEnabled = false;
+let isRgbTextEnabled = false;
+
+// ── Editor Factory ─────────────────────────────────────────────────────────────
 function createEditorState(content) {
   return EditorState.create({
     doc: content,
@@ -32,891 +52,979 @@ function createEditorState(content) {
       highlightActiveLine(),
       highlightActiveLineGutter(),
       autocompletion(),
-      search({top: true}),
+      search({ top: true }),
       keymap.of([...searchKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
       python(),
-      currentTheme,
+      oneDark,
       EditorView.lineWrapping,
       EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
-          files[currentFile] = update.state.doc.toString();
+        if (update.docChanged && currentFile) {
+          const newContent = update.state.doc.toString();
+          const savedContent = fileContents.get(currentFile) ?? '';
+          const isDirtyNow = newContent !== savedContent;
+          if (isDirtyNow && !dirtyFiles.has(currentFile)) {
+            dirtyFiles.add(currentFile);
+            patchTabDirty(currentFile);
+            patchExplorerDirty(currentFile);
+          } else if (!isDirtyNow && dirtyFiles.has(currentFile)) {
+            dirtyFiles.delete(currentFile);
+            patchTabDirty(currentFile);
+            patchExplorerDirty(currentFile);
+          }
         }
-        if (update.selectionSet || update.docChanged || update.geometryChanged || update.focusChanged) {
+        if (update.selectionSet || update.docChanged) {
           if (typeof window.updateZoomOrigin === 'function') window.updateZoomOrigin();
+          updateStatus();
         }
       })
-    ],
+    ]
   });
 }
 
-let fileStates = {};
-
-let view = new EditorView({
-  state: createEditorState(files[currentFile]),
+const view = new EditorView({
+  state: createEditorState(''),
   parent: document.getElementById('editor-wrap'),
 });
-fileStates[currentFile] = view.state;
 
-// ── File Management & Rendering ──────────────────────────────────────────────
-let openTabs = Object.keys(files);
-let activeContextFile = null;
-
-function getFileIcon(filename) {
-  if (filename.endsWith('.py')) return '<i class="fa-brands fa-python" style="color: #4B8BBE;"></i>';
-  if (filename.endsWith('.json')) return '<i class="fa-solid fa-code" style="color: #e06c75;"></i>';
-  if (filename.endsWith('.js')) return '<i class="fa-brands fa-js" style="color: #F7DF1E;"></i>';
-  if (filename.endsWith('.css')) return '<i class="fa-brands fa-css3-alt" style="color: #1572B6;"></i>';
-  if (filename.endsWith('.html')) return '<i class="fa-brands fa-html5" style="color: #E34F26;"></i>';
-  return '<i class="fa-solid fa-file" style="color: #888;"></i>';
+// ── File Icon ──────────────────────────────────────────────────────────────────
+function getFileIcon(name) {
+  if (name.endsWith('.py'))   return '<i class="fa-brands fa-python" style="color:#4B8BBE;"></i>';
+  if (name.endsWith('.json')) return '<i class="fa-solid fa-code" style="color:#e06c75;"></i>';
+  if (name.endsWith('.js'))   return '<i class="fa-brands fa-js" style="color:#F7DF1E;"></i>';
+  if (name.endsWith('.css'))  return '<i class="fa-brands fa-css3-alt" style="color:#1572B6;"></i>';
+  if (name.endsWith('.html')) return '<i class="fa-brands fa-html5" style="color:#E34F26;"></i>';
+  if (name.endsWith('.md'))   return '<i class="fa-solid fa-file-lines" style="color:#6699CC;"></i>';
+  if (name.endsWith('.txt'))  return '<i class="fa-solid fa-file-lines" style="color:#888;"></i>';
+  return '<i class="fa-solid fa-file" style="color:#888;"></i>';
 }
 
-function deleteFile(filename) {
-  if (confirm(`Are you sure you want to delete ${filename}?`)) {
-      delete files[filename];
-      delete fileStates[filename];
-      if (openTabs.includes(filename)) {
-          closeFile(filename);
-      }
-      renderExplorer();
-      renderTabs();
+// CSS-escape a path for querySelector
+function esc(str) {
+  return CSS.escape ? CSS.escape(str) : str.replace(/[!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~]/g, '\\$&');
+}
+
+// ── Open Folder (File System Access API) ──────────────────────────────────────
+async function openFolder() {
+  if (!('showDirectoryPicker' in window)) {
+    alert('Your browser does not support the File System Access API.\nPlease use Chrome or Edge 86+.');
+    return;
+  }
+  try {
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    rootDirHandle = handle;
+    rootName = handle.name;
+
+    // Clear state
+    fileHandles.clear(); dirHandles.clear();
+    fileContents.clear(); fileEditorStates.clear();
+    dirtyFiles.clear(); expandedDirs.clear();
+    openTabs = []; currentFile = null;
+    usingMemory = false;
+
+    dirHandles.set('', handle);
+
+    const children = await scanDir(handle, '');
+    fileTree = { name: rootName, path: '', type: 'directory', children };
+
+    document.getElementById('sidebar-folder-name').textContent = rootName.toUpperCase();
+    showWelcome(false);
+    renderExplorer();
+    renderTabs();
+
+    // Auto-open first .py
+    const first = findFirstFile(children, '.py');
+    if (first) openFile(first);
+  } catch (e) {
+    if (e.name !== 'AbortError') console.error('Open folder failed:', e);
   }
 }
 
-function renderExplorer() {
-  const explorer = document.getElementById('file-explorer');
-  if (!explorer) return;
-  explorer.innerHTML = '';
-  
-  Object.keys(files).sort().forEach(filename => {
-      const div = document.createElement('div');
-      div.className = 'file-item' + (filename === currentFile ? ' active' : '');
-      div.dataset.file = filename;
-      div.tabIndex = 0; // Make focusable
-      div.innerHTML = `${getFileIcon(filename)} <span class="file-name">${filename}</span>`;
-      
-      div.addEventListener('click', () => {
-          openFile(filename);
-          div.focus();
-      });
-      div.addEventListener('keydown', (e) => {
-          if (e.key === 'Delete') {
-              e.preventDefault();
-              deleteFile(filename);
-          }
-      });
-      div.addEventListener('contextmenu', (e) => {
-          e.preventDefault();
-          activeContextFile = filename;
-          const contextMenu = document.getElementById('context-menu');
-          contextMenu.style.left = e.pageX + 'px';
-          contextMenu.style.top = e.pageY + 'px';
-          contextMenu.classList.remove('hidden');
-          div.focus();
-      });
-      
-      explorer.appendChild(div);
+async function scanDir(dirHandle, parentPath) {
+  const children = [];
+  for await (const [name, handle] of dirHandle.entries()) {
+    if (name.startsWith('.') || name === 'node_modules' || name === '__pycache__') continue;
+    const fullPath = parentPath ? `${parentPath}/${name}` : name;
+    if (handle.kind === 'file') {
+      fileHandles.set(fullPath, handle);
+      children.push({ name, path: fullPath, type: 'file' });
+    } else {
+      dirHandles.set(fullPath, handle);
+      const sub = await scanDir(handle, fullPath);
+      children.push({ name, path: fullPath, type: 'directory', children: sub });
+    }
+  }
+  children.sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+    return a.name.localeCompare(b.name);
   });
+  return children;
 }
 
-function renderTabs() {
-  const tabsContainer = document.getElementById('tabs-container');
-  if (!tabsContainer) return;
-  tabsContainer.innerHTML = '';
-  
-  openTabs.forEach(filename => {
-      const div = document.createElement('div');
-      div.className = 'tab' + (filename === currentFile ? ' active' : '');
-      div.dataset.file = filename;
-      div.innerHTML = `
-          ${getFileIcon(filename)}
-          <span class="tab-title" style="margin-left: 6px;">${filename}</span>
-          <div class="tab-close"><i class="fa-solid fa-xmark"></i></div>
-      `;
-      
-      div.addEventListener('click', (e) => {
-          if (e.target.closest('.tab-close')) return;
-          openFile(filename);
-      });
-      
-      const closeBtn = div.querySelector('.tab-close');
-      closeBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          closeFile(filename);
-      });
-      
-      tabsContainer.appendChild(div);
-  });
+function findFirstFile(nodes, ext) {
+  for (const n of nodes) {
+    if (n.type === 'file' && n.name.endsWith(ext)) return n.path;
+    if (n.type === 'directory' && n.children) {
+      const f = findFirstFile(n.children, ext);
+      if (f) return f;
+    }
+  }
+  return null;
 }
 
-function closeFile(filename) {
-  openTabs = openTabs.filter(f => f !== filename);
-  if (filename === currentFile) {
-      if (openTabs.length > 0) {
-          openFile(openTabs[0]);
-      } else {
-          currentFile = null;
-          document.getElementById('editor-wrap').style.display = 'none';
-          if(document.getElementById('editor-breadcrumb')) document.getElementById('editor-breadcrumb').style.display = 'none';
-          renderExplorer();
-          renderTabs();
-          if (document.getElementById('sb-cursor')) document.getElementById('sb-cursor').textContent = "";
-          if (document.getElementById('sb-words')) document.getElementById('sb-words').textContent = "0 words";
-      }
-  } else {
-      renderTabs();
-  }
-}
-
-function openFile(filename) {
-  if (files[filename] === undefined) return;
-  
-  if (currentFile && fileStates[currentFile]) {
-      fileStates[currentFile] = view.state;
-  }
-  
-  if (!openTabs.includes(filename)) openTabs.push(filename);
-  currentFile = filename;
-  
-  document.getElementById('editor-wrap').style.display = 'flex';
-  if(document.getElementById('editor-breadcrumb')) document.getElementById('editor-breadcrumb').style.display = 'flex';
-  
-  if (!fileStates[currentFile]) {
-      fileStates[currentFile] = createEditorState(files[currentFile]);
-  }
-  view.setState(fileStates[currentFile]);
-  
-  const breadcrumbCurrent = document.getElementById('breadcrumb-current');
-  if (breadcrumbCurrent) {
-      breadcrumbCurrent.innerHTML = getFileIcon(filename) + '<span style="margin-left: 6px;">' + filename + '</span>';
-  }
-  
-  // Update styling for explorer items without destroying DOM
-  document.querySelectorAll('.file-item').forEach(el => {
-      if (el.dataset.file === filename) el.classList.add('active');
-      else el.classList.remove('active');
-  });
-  
-  renderTabs();
-  updateStatus();
-};
-
-window.openFile = openFile;
-
-// Initial render
-renderExplorer();
-renderTabs();
-
-// ── Sidebar Resizer Logic ──────────────────────────────────────────────────
-const resizer = document.getElementById('resizer');
-const sidebar = document.getElementById('sidebar');
-let isResizing = false;
-
-resizer.addEventListener('mousedown', (e) => {
-  isResizing = true;
-  resizer.classList.add('resizing');
-  document.body.style.cursor = 'col-resize';
-});
-
-window.addEventListener('mousemove', (e) => {
-  if (!isResizing) return;
-  // Limit structural boundaries realistically
-  let newWidth = e.clientX;
-  if (newWidth < 150) newWidth = 150;
-  if (newWidth > 600) newWidth = 600;
-  sidebar.style.width = newWidth + 'px';
-});
-
-window.addEventListener('mouseup', () => {
-  if (isResizing) {
-    isResizing = false;
-    resizer.classList.remove('resizing');
-    document.body.style.cursor = 'default';
-  }
-});
-
-// ── Explorer Toolbar Actions ──────────────────────────────────────────────────
-document.getElementById('action-new-file').addEventListener('click', (e) => {
-  e.stopPropagation();
-  const filename = prompt("Enter new file name:");
-  if (filename && !files[filename]) {
-      files[filename] = "";
-      renderExplorer();
-      openFile(filename);
-  } else if (filename && files[filename]) {
-      alert("File already exists!");
-  }
-});
-document.getElementById('action-new-folder').addEventListener('click', (e) => {
-  e.stopPropagation();
-  alert("Dummy action: Creating a new folder (awaiting Tauri impl.)");
-});
-document.getElementById('action-refresh').addEventListener('click', (e) => {
-  e.stopPropagation();
+async function refreshTree() {
+  if (usingMemory || !rootDirHandle) { renderExplorer(); return; }
+  fileHandles.clear();
+  dirHandles.set('', rootDirHandle);
+  const children = await scanDir(rootDirHandle, '');
+  fileTree = { name: rootName, path: '', type: 'directory', children };
   renderExplorer();
-});
-document.getElementById('action-collapse').addEventListener('click', (e) => {
-  e.stopPropagation();
-  alert("Dummy action: Collapsing all folders (awaiting Tauri impl.)");
-});
-
-// ── Context Menu Logic ────────────────────────────────────────────────────────
-const contextMenu = document.getElementById('context-menu');
-
-// Hide context menu on global map clicks
-window.addEventListener('click', () => {
-  contextMenu.classList.add('hidden');
-});
-
-// Context Menu actions
-document.getElementById('ctx-rename').addEventListener('click', () => {
-  const newName = prompt(`Rename ${activeContextFile} to:`, activeContextFile);
-  if (newName && newName !== activeContextFile && !files[newName]) {
-      files[newName] = files[activeContextFile];
-      delete files[activeContextFile];
-      
-      if (fileStates[activeContextFile]) {
-          fileStates[newName] = fileStates[activeContextFile];
-          delete fileStates[activeContextFile];
-      }
-      
-      if (openTabs.includes(activeContextFile)) {
-          openTabs[openTabs.indexOf(activeContextFile)] = newName;
-      }
-      
-      if (currentFile === activeContextFile) {
-          currentFile = newName;
-          openFile(newName);
-      } else {
-          renderExplorer();
-          renderTabs();
-      }
-  } else if (newName && files[newName]) {
-      alert("File already exists!");
-  }
-  contextMenu.classList.add('hidden');
-});
-
-document.getElementById('ctx-delete').addEventListener('click', () => {
-  deleteFile(activeContextFile);
-  contextMenu.classList.add('hidden');
-});
-
-document.getElementById('ctx-copy').addEventListener('click', () => {
-  navigator.clipboard.writeText(activeContextFile).catch(() => {});
-  contextMenu.classList.add('hidden');
-});
-
-// Run Button Logic
-document.getElementById('run-btn').addEventListener('click', () => {
-  console.log(`Executing ${currentFile}...`);
-  // Dummy execution simulation
-  alert(`Starting dummy execution for ${currentFile}...\nCheck console for output details (if any).`);
-});
-
-// ── Status bar — live cursor position ─────────────────────────────────────────
-const cursorEl  = document.getElementById('sb-cursor');
-const wordsEl   = document.getElementById('sb-words');
-
-function updateStatus() {
-  const sel    = view.state.selection.main;
-  const line   = view.state.doc.lineAt(sel.head);
-  const col    = sel.head - line.from + 1;
-  if (cursorEl) cursorEl.textContent = `Ln ${line.number}, Col ${col}`;
-
-  const text   = view.state.doc.toString();
-  const words  = text.trim() === '' ? 0 : text.trim().split(/\s+/).length;
-  if (wordsEl) wordsEl.textContent  = `${words} words`;
 }
 
-// Update status on any state change
-view.dom.addEventListener('click',   updateStatus);
-view.dom.addEventListener('keyup',   updateStatus);
-view.dom.addEventListener('keydown', updateStatus);
+// ── Explorer Rendering ─────────────────────────────────────────────────────────
+function renderExplorer() {
+  const el = document.getElementById('file-explorer');
+  if (!el) return;
+  el.innerHTML = '';
 
-updateStatus();
-
-let isZoomEnabled = false;
-
-window.updateZoomOrigin = function() {
-  if (!isZoomEnabled || !view) return;
-  
-  if (!view.hasFocus) {
-    document.body.classList.remove('zoom-active');
+  if (usingMemory) {
+    const welcome = document.createElement('div');
+    welcome.className = 'explorer-welcome';
+    welcome.innerHTML = `
+      <p>No folder open</p>
+      <button id="explorer-open-btn">Open Folder</button>
+    `;
+    welcome.querySelector('#explorer-open-btn').addEventListener('click', () => openFolder());
+    el.appendChild(welcome);
+    
+    // Hide/disable explorer toolbar actions
+    document.querySelector('.title-actions').style.display = 'none';
     return;
   }
   
+  // Show toolbar actions when a folder is open
+  document.querySelector('.title-actions').style.display = 'flex';
+
+  if (!fileTree) return;
+  renderNodes(fileTree.children, el, 0, '');
+}
+
+function renderNodes(nodes, container, depth, parentPath) {
+  // Inline creator for this dir level
+  if (inlineCreator && inlineCreator.parentPath === parentPath) {
+    container.appendChild(buildInlineCreatorEl(depth, parentPath));
+  }
+  if (!nodes) return;
+  nodes.forEach(node => {
+    if (node.type === 'directory') {
+      const expanded = expandedDirs.has(node.path);
+      const dir = document.createElement('div');
+      dir.className = 'dir-item';
+      dir.dataset.path = node.path;
+      dir.style.paddingLeft = (6 + depth * 12) + 'px';
+      dir.innerHTML = `
+        <i class="fa-solid ${expanded ? 'fa-chevron-down' : 'fa-chevron-right'} dir-chevron"></i>
+        <i class="fa-solid ${expanded ? 'fa-folder-open' : 'fa-folder'} dir-icon"></i>
+        <span class="dir-name">${node.name}</span>`;
+
+      dir.addEventListener('click', e => { e.stopPropagation(); toggleDir(node.path); });
+      dir.addEventListener('contextmenu', e => {
+        e.preventDefault(); e.stopPropagation();
+        activeContextPath = node.path; activeContextIsDir = true;
+        showCtxMenu(e.pageX, e.pageY);
+      });
+      container.appendChild(dir);
+
+      if (expanded) renderNodes(node.children, container, depth + 1, node.path);
+    } else {
+      container.appendChild(buildFileEl(node.path, node.name, depth));
+    }
+  });
+}
+
+function buildFileEl(filePath, fileName, depth) {
+  const dirty = dirtyFiles.has(filePath);
+  const div = document.createElement('div');
+  div.className = 'file-item' + (filePath === currentFile ? ' active' : '');
+  div.dataset.file = filePath;
+  div.tabIndex = 0;
+  div.style.paddingLeft = (6 + depth * 12 + (usingMemory ? 0 : 16)) + 'px';
+  div.innerHTML = `${getFileIcon(fileName)}<span class="file-name">${fileName}</span>${dirty ? '<span class="explorer-dot">●</span>' : ''}`;
+  div.addEventListener('click', () => openFile(filePath));
+  div.addEventListener('keydown', e => { if (e.key === 'Delete') { e.preventDefault(); deleteItem(filePath, false); }});
+  div.addEventListener('contextmenu', e => {
+    e.preventDefault(); e.stopPropagation();
+    activeContextPath = filePath; activeContextIsDir = false;
+    showCtxMenu(e.pageX, e.pageY);
+  });
+  return div;
+}
+
+function buildInlineCreatorEl(depth, parentPath) {
+  const wrap = document.createElement('div');
+  wrap.className = 'inline-creator';
+  const extraIndent = usingMemory ? 0 : 16;
+  wrap.style.paddingLeft = (6 + depth * 12 + extraIndent) + 'px';
+  const iconHtml = inlineCreator.type === 'file'
+    ? '<i class="fa-solid fa-file" style="color:#888;"></i>'
+    : '<i class="fa-solid fa-folder" style="color:#E8AB4F;"></i>';
+  wrap.innerHTML = `${iconHtml}<input type="text" class="inline-input" placeholder="${inlineCreator.type === 'file' ? 'filename.py' : 'folder'}" autocomplete="off" spellcheck="false"/>`;
+
+  const input = wrap.querySelector('.inline-input');
+  setTimeout(() => { input.focus(); input.select(); }, 30);
+
+  const commit = async () => {
+    const name = input.value.trim();
+    if (name) {
+      if (inlineCreator.type === 'file') await doCreateFile(parentPath, name);
+      else await doCreateDir(parentPath, name);
+    }
+    inlineCreator = null;
+    await refreshTree();
+  };
+
+  input.addEventListener('keydown', async e => {
+    if (e.key === 'Enter') { e.preventDefault(); await commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); inlineCreator = null; renderExplorer(); }
+  });
+  input.addEventListener('blur', () => setTimeout(async () => {
+    if (inlineCreator) { inlineCreator = null; renderExplorer(); }
+  }, 150));
+  return wrap;
+}
+
+function toggleDir(path) {
+  if (expandedDirs.has(path)) expandedDirs.delete(path);
+  else expandedDirs.add(path);
+  renderExplorer();
+}
+
+// ── Tab Rendering ──────────────────────────────────────────────────────────────
+function renderTabs() {
+  const c = document.getElementById('tabs-container');
+  if (!c) return;
+  c.innerHTML = '';
+  openTabs.forEach(fp => {
+    const fn = fp.split('/').pop();
+    const dirty = dirtyFiles.has(fp);
+    const div = document.createElement('div');
+    div.className = 'tab' + (fp === currentFile ? ' active' : '');
+    div.dataset.file = fp;
+    div.innerHTML = `${getFileIcon(fn)}<span class="tab-title">${fn}</span><div class="tab-close-btn ${dirty ? 'is-dirty' : ''}">${dirty ? '<span class="tab-dot">●</span>' : '<i class="fa-solid fa-xmark"></i>'}</div>`;
+    div.addEventListener('click', e => { if (!e.target.closest('.tab-close-btn')) openFile(fp); });
+    div.querySelector('.tab-close-btn').addEventListener('click', e => { e.stopPropagation(); closeTab(fp); });
+    c.appendChild(div);
+  });
+}
+
+function patchTabDirty(fp) {
+  const btn = document.querySelector(`.tab[data-file="${esc(fp)}"] .tab-close-btn`);
+  if (!btn) { renderTabs(); return; }
+  const dirty = dirtyFiles.has(fp);
+  btn.className = 'tab-close-btn' + (dirty ? ' is-dirty' : '');
+  btn.innerHTML = dirty ? '<span class="tab-dot">●</span>' : '<i class="fa-solid fa-xmark"></i>';
+}
+
+function patchExplorerDirty(fp) {
+  const el = document.querySelector(`.file-item[data-file="${esc(fp)}"]`);
+  if (!el) return;
+  let dot = el.querySelector('.explorer-dot');
+  if (dirtyFiles.has(fp)) {
+    if (!dot) { dot = document.createElement('span'); dot.className = 'explorer-dot'; dot.textContent = '●'; el.appendChild(dot); }
+  } else {
+    dot?.remove();
+  }
+}
+
+// ── Open / Close File ──────────────────────────────────────────────────────────
+async function openFile(filePath) {
+  if (!filePath) return;
+  if (currentFile) fileEditorStates.set(currentFile, view.state);
+
+  if (!fileEditorStates.has(filePath)) {
+    let content = '';
+    if (usingMemory) {
+      content = memFiles[filePath] ?? '';
+      fileContents.set(filePath, content);
+    } else {
+      const handle = fileHandles.get(filePath);
+      if (!handle) return;
+      try {
+        const f = await handle.getFile();
+        content = await f.text();
+        fileContents.set(filePath, content);
+      } catch (e) { console.error('Read failed:', e); return; }
+    }
+    fileEditorStates.set(filePath, createEditorState(content));
+  }
+
+  if (!openTabs.includes(filePath)) openTabs.push(filePath);
+  currentFile = filePath;
+
+  showWelcome(false);
+  document.getElementById('editor-wrap').style.display = 'flex';
+  const bc = document.getElementById('editor-breadcrumb');
+  if (bc) bc.style.display = 'flex';
+
+  view.setState(fileEditorStates.get(filePath));
+  updateBreadcrumb(filePath);
+
+  document.querySelectorAll('.file-item').forEach(el =>
+    el.classList.toggle('active', el.dataset.file === filePath));
+  renderTabs();
+  updateStatus();
+  setTimeout(() => view.focus(), 30);
+}
+window.openFile = openFile;
+
+async function closeTab(filePath) {
+  if (dirtyFiles.has(filePath)) {
+    const result = await showSaveDialog(filePath);
+    if (result === 'cancel') return;
+    if (result === 'save') await saveFile(filePath);
+    dirtyFiles.delete(filePath);
+  }
+
+  openTabs = openTabs.filter(f => f !== filePath);
+  fileEditorStates.delete(filePath);
+
+  if (filePath === currentFile) {
+    if (openTabs.length > 0) {
+      await openFile(openTabs[openTabs.length - 1]);
+    } else {
+      currentFile = null;
+      document.getElementById('editor-wrap').style.display = 'none';
+      const bc = document.getElementById('editor-breadcrumb');
+      if (bc) { bc.style.display = 'none'; bc.innerHTML = ''; }
+      showWelcome(true);
+      renderExplorer();
+      renderTabs();
+    }
+  } else {
+    renderTabs();
+  }
+}
+
+// ── Save File ───────────────────────────────────────────────────────────────────
+async function saveFile(filePath) {
+  const fp = filePath ?? currentFile;
+  if (!fp) return;
+  const content = fp === currentFile ? view.state.doc.toString() : (fileEditorStates.get(fp)?.doc.toString() ?? '');
+
+  if (usingMemory) {
+    memFiles[fp] = content;
+  } else {
+    const handle = fileHandles.get(fp);
+    if (!handle) return;
+    try {
+      const w = await handle.createWritable();
+      await w.write(content);
+      await w.close();
+    } catch (e) { console.error('Save failed:', e); return; }
+  }
+  fileContents.set(fp, content);
+  dirtyFiles.delete(fp);
+  patchTabDirty(fp);
+  patchExplorerDirty(fp);
+}
+
+// ── Save Dialog ─────────────────────────────────────────────────────────────────
+function showSaveDialog(filePath) {
+  return new Promise(resolve => {
+    const overlay = document.getElementById('save-dialog-overlay');
+    document.getElementById('save-dialog-message').textContent =
+      `Do you want to save changes to "${filePath.split('/').pop()}"?`;
+    overlay.classList.remove('hidden');
+
+    const saveBtn = document.getElementById('save-dialog-save');
+    const skipBtn = document.getElementById('save-dialog-dont-save');
+    const cancelBtn = document.getElementById('save-dialog-cancel');
+
+    const done = (result) => {
+      overlay.classList.add('hidden');
+      saveBtn.removeEventListener('click', onSave);
+      skipBtn.removeEventListener('click', onSkip);
+      cancelBtn.removeEventListener('click', onCancel);
+      resolve(result);
+    };
+    const onSave = () => done('save');
+    const onSkip = () => done('discard');
+    const onCancel = () => done('cancel');
+
+    saveBtn.addEventListener('click', onSave);
+    skipBtn.addEventListener('click', onSkip);
+    cancelBtn.addEventListener('click', onCancel);
+  });
+}
+
+// ── Create File / Folder ────────────────────────────────────────────────────────
+async function doCreateFile(parentPath, name) {
+  const fullPath = parentPath ? `${parentPath}/${name}` : name;
+  if (usingMemory) {
+    memFiles[fullPath] = '';
+    fileContents.set(fullPath, '');
+    await openFile(fullPath);
+    return;
+  }
+  const dh = parentPath === '' ? rootDirHandle : dirHandles.get(parentPath);
+  if (!dh) return;
+  try {
+    const fh = await dh.getFileHandle(name, { create: true });
+    fileHandles.set(fullPath, fh);
+    const empty = await fh.getFile();
+    fileContents.set(fullPath, await empty.text());
+    await refreshTree();
+    await openFile(fullPath);
+  } catch (e) { console.error('Create file failed:', e); }
+}
+
+async function doCreateDir(parentPath, name) {
+  if (usingMemory) return;
+  const fullPath = parentPath ? `${parentPath}/${name}` : name;
+  const dh = parentPath === '' ? rootDirHandle : dirHandles.get(parentPath);
+  if (!dh) return;
+  try {
+    const nd = await dh.getDirectoryHandle(name, { create: true });
+    dirHandles.set(fullPath, nd);
+    expandedDirs.add(fullPath);
+    await refreshTree();
+  } catch (e) { console.error('Create dir failed:', e); }
+}
+
+function startInlineCreate(parentPath, type) {
+  if (!usingMemory && parentPath !== '' && !expandedDirs.has(parentPath)) {
+    expandedDirs.add(parentPath);
+  }
+  inlineCreator = { parentPath, type };
+  renderExplorer();
+}
+
+// ── Delete Item ─────────────────────────────────────────────────────────────────
+async function deleteItem(filePath, isDir) {
+  const name = filePath.split('/').pop();
+  if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+
+  if (usingMemory && !isDir) {
+    delete memFiles[filePath];
+    fileContents.delete(filePath);
+    if (openTabs.includes(filePath)) {
+      openTabs = openTabs.filter(f => f !== filePath);
+      fileEditorStates.delete(filePath); dirtyFiles.delete(filePath);
+      if (currentFile === filePath) {
+        if (openTabs.length > 0) await openFile(openTabs[openTabs.length - 1]);
+        else { currentFile = null; showWelcome(true); renderTabs(); }
+      } else renderTabs();
+    }
+    renderExplorer(); return;
+  }
+
+  const parentPath = filePath.includes('/') ? filePath.split('/').slice(0, -1).join('/') : '';
+  const ph = parentPath === '' ? rootDirHandle : dirHandles.get(parentPath);
+  if (!ph) return;
+  try {
+    await ph.removeEntry(name, { recursive: isDir });
+    if (!isDir) {
+      fileHandles.delete(filePath); fileContents.delete(filePath); dirtyFiles.delete(filePath);
+      if (openTabs.includes(filePath)) {
+        openTabs = openTabs.filter(f => f !== filePath);
+        fileEditorStates.delete(filePath);
+        if (currentFile === filePath) {
+          if (openTabs.length > 0) await openFile(openTabs[openTabs.length - 1]);
+          else { currentFile = null; showWelcome(true); renderTabs(); }
+        } else renderTabs();
+      }
+    }
+    await refreshTree();
+  } catch (e) { console.error('Delete failed:', e); }
+}
+
+// ── Rename ──────────────────────────────────────────────────────────────────────
+function startRename(filePath, isDir) {
+  hideCtxMenu();
+  const sel = isDir ? `.dir-item[data-path="${esc(filePath)}"]` : `.file-item[data-file="${esc(filePath)}"]`;
+  const el = document.querySelector(sel);
+  if (!el) return;
+  const nameEl = el.querySelector('.file-name, .dir-name');
+  if (!nameEl) return;
+
+  const original = nameEl.textContent;
+  const input = document.createElement('input');
+  input.type = 'text'; input.value = original;
+  input.className = 'inline-input rename-input';
+  input.autocomplete = 'off'; input.spellcheck = false;
+  nameEl.replaceWith(input);
+  input.select();
+
+  let committed = false;
+  const commit = async () => {
+    if (committed) return; committed = true;
+    const newName = input.value.trim();
+    if (!newName || newName === original) { input.replaceWith(nameEl); return; }
+    await doRename(filePath, isDir, original, newName);
+  };
+
+  input.addEventListener('keydown', async e => {
+    if (e.key === 'Enter') { e.preventDefault(); await commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); input.replaceWith(nameEl); }
+  });
+  input.addEventListener('blur', () => setTimeout(commit, 100));
+}
+
+async function doRename(filePath, isDir, original, newName) {
+  const parentPath = filePath.includes('/') ? filePath.split('/').slice(0, -1).join('/') : '';
+  const newPath = parentPath ? `${parentPath}/${newName}` : newName;
+
+  if (usingMemory && !isDir) {
+    memFiles[newPath] = memFiles[filePath]; delete memFiles[filePath];
+    fileContents.set(newPath, fileContents.get(filePath) ?? ''); fileContents.delete(filePath);
+    const tabIdx = openTabs.indexOf(filePath);
+    if (tabIdx !== -1) openTabs[tabIdx] = newPath;
+    if (currentFile === filePath) currentFile = newPath;
+    const state = fileEditorStates.get(filePath);
+    if (state) { fileEditorStates.set(newPath, state); fileEditorStates.delete(filePath); }
+    if (dirtyFiles.has(filePath)) { dirtyFiles.add(newPath); dirtyFiles.delete(filePath); }
+    renderExplorer(); renderTabs();
+    if (currentFile === newPath) updateBreadcrumb(newPath);
+    return;
+  }
+
+  if (!isDir) {
+    const fh = fileHandles.get(filePath);
+    if (!fh) return;
+    const ph = parentPath === '' ? rootDirHandle : dirHandles.get(parentPath);
+    if (!ph) return;
+    try {
+      // Read → create new → delete old
+      const f = await fh.getFile(); const content = await f.text();
+      const nfh = await ph.getFileHandle(newName, { create: true });
+      const w = await nfh.createWritable(); await w.write(content); await w.close();
+      await ph.removeEntry(original);
+      fileHandles.set(newPath, nfh); fileHandles.delete(filePath);
+      fileContents.set(newPath, content); fileContents.delete(filePath);
+      const tabIdx = openTabs.indexOf(filePath);
+      if (tabIdx !== -1) openTabs[tabIdx] = newPath;
+      if (currentFile === filePath) currentFile = newPath;
+      const state = fileEditorStates.get(filePath);
+      if (state) { fileEditorStates.set(newPath, state); fileEditorStates.delete(filePath); }
+      if (dirtyFiles.has(filePath)) { dirtyFiles.add(newPath); dirtyFiles.delete(filePath); }
+      await refreshTree(); renderTabs();
+      if (currentFile === newPath) updateBreadcrumb(newPath);
+    } catch (e) { console.error('Rename failed:', e); }
+  } else {
+    alert('Folder rename is not supported via the browser File System API.\nCreate a new folder and move files manually.');
+  }
+}
+
+// ── Breadcrumb ──────────────────────────────────────────────────────────────────
+function updateBreadcrumb(filePath) {
+  const bc = document.getElementById('editor-breadcrumb');
+  if (!bc) return;
+  const parts = filePath.split('/');
+  const all = [rootName, ...parts];
+  bc.innerHTML = all.map((p, i) => {
+    const isLast = i === all.length - 1;
+    const isRoot = i === 0;
+    const icon = isLast
+      ? getFileIcon(p)
+      : (isRoot ? '' : '<i class="fa-solid fa-folder" style="color:#E8AB4F;font-size:11px;"></i>');
+    return `<span class="crumb${isLast ? ' current-file-crumb' : ''}">${icon ? icon + ' ' : ''}${p}</span>${!isLast ? '<i class="fa-solid fa-chevron-right crumb-separator"></i>' : ''}`;
+  }).join('');
+}
+
+// ── Welcome Screen ──────────────────────────────────────────────────────────────
+function showWelcome(show) {
+  const welcome = document.getElementById('editor-welcome');
+  const msg = document.getElementById('welcome-message');
+  const btn = document.getElementById('welcome-open-btn');
+  const bc = document.getElementById('editor-breadcrumb');
+  const wrap = document.getElementById('editor-wrap');
+  const header = document.querySelector('.editor-header');
+
+  if (show) {
+    welcome.style.display = 'flex';
+    wrap.style.display = 'none';
+    if (bc) bc.style.display = 'none';
+    if (header) header.style.display = 'none';
+    
+    if (usingMemory) {
+      msg.textContent = 'Open a folder to start editing';
+      btn.style.display = 'inline-block';
+    } else {
+      msg.textContent = 'Select a file to start editing';
+      btn.style.display = 'none';
+    }
+  } else {
+    welcome.style.display = 'none';
+    wrap.style.display = 'flex';
+    if (bc) bc.style.display = 'flex';
+    if (header) header.style.display = 'flex';
+  }
+}
+
+document.getElementById('welcome-open-btn').addEventListener('click', () => openFolder());
+
+// ── Context Menu ────────────────────────────────────────────────────────────────
+const ctxMenu = document.getElementById('context-menu');
+
+function showCtxMenu(x, y) {
+  if (usingMemory) return;
+  ctxMenu.innerHTML = '';
+  const isDir = activeContextIsDir;
+  const p = activeContextPath;
+  const parentOfSelected = isDir ? p : (p.includes('/') ? p.split('/').slice(0, -1).join('/') : '');
+  const createTarget = isDir ? p : parentOfSelected;
+
+  const item = (label, icon, fn, danger = false) => {
+    const d = document.createElement('div');
+    d.className = 'context-item' + (danger ? ' ctx-danger' : '');
+    d.innerHTML = `<i class="fa-solid ${icon}"></i><span>${label}</span>`;
+    d.addEventListener('click', e => { e.stopPropagation(); hideCtxMenu(); fn(); });
+    ctxMenu.appendChild(d);
+  };
+  const sep = () => { const s = document.createElement('div'); s.className = 'ctx-sep'; ctxMenu.appendChild(s); };
+
+  item('New File', 'fa-file-circle-plus', () => startInlineCreate(createTarget, 'file'));
+  item('New Folder', 'fa-folder-plus', () => startInlineCreate(createTarget, 'directory'));
+  sep();
+  item('Rename', 'fa-pencil', () => startRename(p, isDir));
+  sep();
+  item('Delete', 'fa-trash', () => deleteItem(p, isDir), true);
+  sep();
+  item('Copy Path', 'fa-copy', () => navigator.clipboard.writeText(p).catch(() => {}));
+
+  ctxMenu.style.left = x + 'px'; ctxMenu.style.top = y + 'px';
+  ctxMenu.classList.remove('hidden');
+  requestAnimationFrame(() => {
+    const r = ctxMenu.getBoundingClientRect();
+    if (r.right > window.innerWidth) ctxMenu.style.left = (x - r.width) + 'px';
+    if (r.bottom > window.innerHeight) ctxMenu.style.top = (y - r.height) + 'px';
+  });
+}
+
+function hideCtxMenu() { ctxMenu.classList.add('hidden'); }
+window.addEventListener('click', () => hideCtxMenu());
+
+// ── Sidebar Resizer ─────────────────────────────────────────────────────────────
+const resizer = document.getElementById('resizer');
+const sidebar = document.getElementById('sidebar');
+let isResizing = false;
+resizer.addEventListener('mousedown', () => { isResizing = true; resizer.classList.add('resizing'); document.body.style.cursor = 'col-resize'; });
+window.addEventListener('mousemove', e => { if (!isResizing) return; let w = Math.max(150, Math.min(600, e.clientX)); sidebar.style.width = w + 'px'; });
+window.addEventListener('mouseup', () => { if (isResizing) { isResizing = false; resizer.classList.remove('resizing'); document.body.style.cursor = ''; } });
+
+// ── Explorer Toolbar ────────────────────────────────────────────────────────────
+document.getElementById('action-new-file').addEventListener('click', e => {
+  e.stopPropagation();
+  const parent = (currentFile && currentFile.includes('/')) ? currentFile.split('/').slice(0, -1).join('/') : '';
+  startInlineCreate(parent, 'file');
+});
+document.getElementById('action-new-folder').addEventListener('click', e => {
+  e.stopPropagation();
+  const parent = (currentFile && currentFile.includes('/')) ? currentFile.split('/').slice(0, -1).join('/') : '';
+  startInlineCreate(parent, 'directory');
+});
+document.getElementById('action-refresh').addEventListener('click', async e => { e.stopPropagation(); await refreshTree(); });
+document.getElementById('action-collapse').addEventListener('click', e => { e.stopPropagation(); expandedDirs.clear(); renderExplorer(); });
+
+// ── Status Bar ──────────────────────────────────────────────────────────────────
+const cursorEl = document.getElementById('sb-cursor');
+const wordsEl  = document.getElementById('sb-words');
+function updateStatus() {
+  if (!currentFile) return;
+  const sel  = view.state.selection.main;
+  const line = view.state.doc.lineAt(sel.head);
+  const col  = sel.head - line.from + 1;
+  if (cursorEl) cursorEl.textContent = `Ln ${line.number}, Col ${col}`;
+  const txt = view.state.doc.toString();
+  if (wordsEl) wordsEl.textContent = `${txt.trim() === '' ? 0 : txt.trim().split(/\s+/).length} words`;
+}
+view.dom.addEventListener('click', updateStatus);
+view.dom.addEventListener('keyup',  updateStatus);
+
+// ── Zoom Logic ──────────────────────────────────────────────────────────────────
+window.updateZoomOrigin = function () {
+  if (!isZoomEnabled || !view) return;
+  if (!view.hasFocus) { document.body.classList.remove('zoom-active'); return; }
   const sel = view.state.selection.main;
   const coords = view.coordsAtPos(sel.head);
-  
   if (coords) {
     const rect = view.dom.getBoundingClientRect();
     if (rect.width > 0 && rect.height > 0) {
-      // Find the unscaled physical position using mathematical screen ratios spanning the scaled bounding box
-      const unscaledX = ((coords.left - rect.left) / rect.width) * view.dom.offsetWidth;
-      const unscaledY = ((coords.top - rect.top) / rect.height) * view.dom.offsetHeight;
-      
-      const W = view.dom.offsetWidth;
-      const H = view.dom.offsetHeight;
-      
-      // We want the caret to have at least this much pixel margin on screen
-      // 400 screen pixels / 3 (scale) = ~133 unscaled pixels = gutter + ~12 chars
-      const minMarginX = 400; 
-      const minMarginY = 200; 
-      
-      let targetScreenX = Math.max(minMarginX, Math.min(W - minMarginX, unscaledX));
-      let targetScreenY = Math.max(minMarginY, Math.min(H - minMarginY, unscaledY));
-      
-      if (W < minMarginX * 2) targetScreenX = W / 2;
-      if (H < minMarginY * 2) targetScreenY = H / 2;
-      
-      const scale = 3;
-      const originX = (targetScreenX - scale * unscaledX) / (1 - scale);
-      const originY = (targetScreenY - scale * unscaledY) / (1 - scale);
-      
-      view.dom.style.setProperty('--caret-x', `${originX}px`);
-      view.dom.style.setProperty('--caret-y', `${originY}px`);
+      const ux = ((coords.left - rect.left) / rect.width) * view.dom.offsetWidth;
+      const uy = ((coords.top  - rect.top)  / rect.height) * view.dom.offsetHeight;
+      const W = view.dom.offsetWidth, H = view.dom.offsetHeight;
+      const mx = 400, my = 200;
+      let tx = Math.max(mx, Math.min(W - mx, ux));
+      let ty = Math.max(my, Math.min(H - my, uy));
+      if (W < mx * 2) tx = W / 2;
+      if (H < my * 2) ty = H / 2;
+      const s = 3;
+      view.dom.style.setProperty('--caret-x', `${(tx - s * ux) / (1 - s)}px`);
+      view.dom.style.setProperty('--caret-y', `${(ty - s * uy) / (1 - s)}px`);
     }
   }
-  
   document.body.classList.add('zoom-active');
 };
 
-// ── Command Palette Logic ──────────────────────────────────────────────────
+// ── Command Palette ─────────────────────────────────────────────────────────────
 const commandOverlay = document.getElementById('command-palette-overlay');
-const commandInput = document.getElementById('command-input');
-const paletteList = document.getElementById('palette-list');
-let isGlowEnabled = false;
-let isRgbGlowEnabled = false;
-let isRgbTextEnabled = false;
+const commandInput   = document.getElementById('command-input');
+const paletteList    = document.getElementById('palette-list');
 
 const commands = [
-  { id: 'toggle-glow', label: 'Preferences: Toggle Neon Glow Effect' },
-  { id: 'toggle-rgb-glow', label: 'Preferences: Toggle RGB Moving Glow Effect' },
-  { id: 'toggle-rgb-text', label: 'Preferences: Toggle RGB Text Effect (No Glow)' },
-  { id: 'toggle-zoom', label: 'Preferences: Toggle 300% Zoom Tracking' },
-  { id: 'new-file', label: 'File: New File' },
-  { id: 'new-folder', label: 'File: New Folder' },
-  { id: 'close-editor', label: 'View: Close Editor' },
-  { id: 'open-keybindings', label: 'Preferences: Open Keyboard Shortcuts' }
+  { id: 'open-folder',       label: 'File: Open Folder...' },
+  { id: 'new-file',          label: 'File: New File' },
+  { id: 'new-folder',        label: 'File: New Folder' },
+  { id: 'save-file',         label: 'File: Save' },
+  { id: 'close-editor',      label: 'View: Close Editor' },
+  { id: 'toggle-glow',       label: 'Preferences: Toggle Neon Glow Effect' },
+  { id: 'toggle-rgb-glow',   label: 'Preferences: Toggle RGB Moving Glow Effect' },
+  { id: 'toggle-rgb-text',   label: 'Preferences: Toggle RGB Text Effect' },
+  { id: 'toggle-zoom',       label: 'Preferences: Toggle 300% Zoom Tracking' },
+  { id: 'open-keybindings',  label: 'Preferences: Open Keyboard Shortcuts' },
 ];
 
-let filteredCommands = [];
-let selectedIndex = 0;
+let filteredCmds = [], selIdx = 0;
 
-function toggleCommandPalette(forceClose = false, mode = 'command') {
+function togglePalette(forceClose = false, mode = 'command') {
   if (forceClose || commandOverlay.classList.contains('active')) {
     commandOverlay.classList.remove('active');
     view.focus();
   } else {
     commandOverlay.classList.add('active');
-    if (mode === 'command') {
-      commandInput.value = '>';
-      renderCommands('>');
-    } else {
-      commandInput.value = '';
-      renderCommands('');
-    }
+    commandInput.value = mode === 'command' ? '>' : '';
+    renderPalette(commandInput.value);
     setTimeout(() => commandInput.focus(), 50);
   }
 }
 
-function renderCommands(query) {
-  if (query.startsWith('>')) {
-    const search = query.slice(1).trim().toLowerCase();
-    filteredCommands = commands.filter(c => c.label.toLowerCase().includes(search));
+function renderPalette(q) {
+  if (q.startsWith('>')) {
+    const s = q.slice(1).trim().toLowerCase();
+    filteredCmds = commands.filter(c => c.label.toLowerCase().includes(s));
   } else {
-    const search = query.toLowerCase();
-    filteredCommands = Object.keys(files)
-        .filter(f => f.toLowerCase().includes(search))
-        .map(f => ({ id: 'open-file:' + f, label: f, isFile: true }));
+    const s = q.toLowerCase();
+    const allFiles = usingMemory ? Object.keys(memFiles) : [...fileHandles.keys()];
+    filteredCmds = allFiles.filter(f => f.toLowerCase().includes(s))
+      .map(f => ({ id: 'open-file:' + f, label: f, isFile: true }));
   }
-  
-  selectedIndex = 0;
-  
+  selIdx = 0;
   paletteList.innerHTML = '';
-  filteredCommands.forEach((cmd, idx) => {
+  filteredCmds.forEach((cmd, i) => {
     const el = document.createElement('div');
-    el.className = 'palette-item' + (idx === 0 ? ' active' : '');
-    el.innerHTML = cmd.isFile ? `${getFileIcon(cmd.label)} <span style="margin-left:8px;">${cmd.label}</span>` : cmd.label;
-    el.onclick = () => executeCommand(cmd.id);
-    
-    el.addEventListener('mouseenter', () => {
-      document.querySelectorAll('.palette-item').forEach(i => i.classList.remove('active'));
-      el.classList.add('active');
-      selectedIndex = idx;
-    });
-    
+    el.className = 'palette-item' + (i === 0 ? ' active' : '');
+    el.innerHTML = cmd.isFile ? `${getFileIcon(cmd.label)}<span style="margin-left:8px">${cmd.label}</span>` : cmd.label;
+    el.onclick = () => execCmd(cmd.id);
+    el.addEventListener('mouseenter', () => { document.querySelectorAll('.palette-item').forEach(x => x.classList.remove('active')); el.classList.add('active'); selIdx = i; });
     paletteList.appendChild(el);
   });
 }
 
-function updateCommandSelection() {
-  const items = document.querySelectorAll('.palette-item');
-  items.forEach((el, idx) => {
-    if (idx === selectedIndex) el.classList.add('active');
-    else el.classList.remove('active');
-  });
-  if(items[selectedIndex]) items[selectedIndex].scrollIntoView({ block: 'nearest' });
-}
-
-function executeCommand(id) {
-  toggleCommandPalette(true);
-  
-  if (id.startsWith('open-file:')) {
-    const filename = id.split(':')[1];
-    openFile(filename);
-    return;
-  }
-  
-  if (id === 'toggle-glow') {
-    isGlowEnabled = !isGlowEnabled;
-    if (isGlowEnabled) {
-      document.body.classList.add('glow-effect');
-      document.body.classList.remove('glow-effect-micro');
-      isRgbGlowEnabled = false;
-      document.body.classList.remove('rgb-glow-effect');
-      isRgbTextEnabled = false;
-      document.body.classList.remove('rgb-text-effect');
-    } else {
-      document.body.classList.remove('glow-effect');
-      document.body.classList.remove('glow-effect-micro');
-    }
-  } else if (id === 'toggle-rgb-glow') {
-    isRgbGlowEnabled = !isRgbGlowEnabled;
-    if (isRgbGlowEnabled) {
-      document.body.classList.add('rgb-glow-effect');
-      isGlowEnabled = false;
-      document.body.classList.remove('glow-effect');
-      document.body.classList.remove('glow-effect-micro');
-      isRgbTextEnabled = false;
-      document.body.classList.remove('rgb-text-effect');
-    } else {
-      document.body.classList.remove('rgb-glow-effect');
-    }
-  } else if (id === 'toggle-rgb-text') {
-    isRgbTextEnabled = !isRgbTextEnabled;
-    if (isRgbTextEnabled) {
-      document.body.classList.add('rgb-text-effect');
-      isGlowEnabled = false;
-      document.body.classList.remove('glow-effect');
-      document.body.classList.remove('glow-effect-micro');
-      isRgbGlowEnabled = false;
-      document.body.classList.remove('rgb-glow-effect');
-    } else {
-      document.body.classList.remove('rgb-text-effect');
-    }
-  } else if (id === 'toggle-zoom') {
-    isZoomEnabled = !isZoomEnabled;
-    if (isZoomEnabled) {
-      document.body.classList.add('zoom-tracking-effect');
-      document.body.classList.add('zoom-active');
-      window.updateZoomOrigin();
-    } else {
-      document.body.classList.remove('zoom-tracking-effect');
-      document.body.classList.remove('zoom-active');
-      view.dom.style.removeProperty('--caret-x');
-      view.dom.style.removeProperty('--caret-y');
-    }
-  } else if (id === 'new-file') {
-    const filename = prompt("Enter new file name:");
-    if (filename && !files[filename]) {
-        files[filename] = "";
-        renderExplorer();
-        openFile(filename);
-    } else if (filename && files[filename]) {
-        alert("File already exists!");
-    }
-  } else if (id === 'new-folder') {
-    alert("Dummy Action: New Folder (awaiting Tauri impl.)");
-  } else if (id === 'close-editor') {
-    const activeClose = document.querySelector('.tab.active .tab-close');
-    if(activeClose) activeClose.click();
-  } else if (id === 'open-keybindings') {
-    openKeymapSettings();
+function execCmd(id) {
+  togglePalette(true);
+  if (id.startsWith('open-file:')) { openFile(id.slice(10)); return; }
+  switch (id) {
+    case 'open-folder':     openFolder(); break;
+    case 'new-file':
+      if (usingMemory) { alert('Please open a folder first.'); return; }
+      { const p = (currentFile && currentFile.includes('/')) ? currentFile.split('/').slice(0, -1).join('/') : ''; startInlineCreate(p, 'file'); }
+      break;
+    case 'new-folder':
+      if (usingMemory) { alert('Please open a folder first.'); return; }
+      { const p = (currentFile && currentFile.includes('/')) ? currentFile.split('/').slice(0, -1).join('/') : ''; startInlineCreate(p, 'directory'); }
+      break;
+    case 'save-file':
+      if (usingMemory) return;
+      saveFile(); break;
+    case 'close-editor':    if (currentFile) closeTab(currentFile); break;
+    case 'toggle-glow':
+      isGlowEnabled = !isGlowEnabled;
+      isRgbGlowEnabled = false; isRgbTextEnabled = false;
+      document.body.classList.toggle('glow-effect', isGlowEnabled);
+      document.body.classList.remove('rgb-glow-effect', 'rgb-text-effect'); break;
+    case 'toggle-rgb-glow':
+      isRgbGlowEnabled = !isRgbGlowEnabled;
+      isGlowEnabled = false; isRgbTextEnabled = false;
+      document.body.classList.toggle('rgb-glow-effect', isRgbGlowEnabled);
+      document.body.classList.remove('glow-effect', 'rgb-text-effect'); break;
+    case 'toggle-rgb-text':
+      isRgbTextEnabled = !isRgbTextEnabled;
+      isGlowEnabled = false; isRgbGlowEnabled = false;
+      document.body.classList.toggle('rgb-text-effect', isRgbTextEnabled);
+      document.body.classList.remove('glow-effect', 'rgb-glow-effect'); break;
+    case 'toggle-zoom':
+      isZoomEnabled = !isZoomEnabled;
+      document.body.classList.toggle('zoom-tracking-effect', isZoomEnabled);
+      if (isZoomEnabled) { document.body.classList.add('zoom-active'); window.updateZoomOrigin(); }
+      else { document.body.classList.remove('zoom-active'); view.dom.style.removeProperty('--caret-x'); view.dom.style.removeProperty('--caret-y'); } break;
+    case 'open-keybindings': openKeymapSettings(); break;
   }
 }
 
-commandInput.addEventListener('input', (e) => {
-  renderCommands(e.target.value);
+commandInput.addEventListener('input', e => renderPalette(e.target.value));
+commandInput.addEventListener('keydown', e => {
+  if (e.key === 'Escape') togglePalette(true);
+  else if (e.key === 'ArrowDown') { e.preventDefault(); if (selIdx < filteredCmds.length - 1) { selIdx++; document.querySelectorAll('.palette-item').forEach((el,i) => el.classList.toggle('active', i === selIdx)); document.querySelectorAll('.palette-item')[selIdx]?.scrollIntoView({block:'nearest'}); } }
+  else if (e.key === 'ArrowUp')   { e.preventDefault(); if (selIdx > 0) { selIdx--; document.querySelectorAll('.palette-item').forEach((el,i) => el.classList.toggle('active', i === selIdx)); document.querySelectorAll('.palette-item')[selIdx]?.scrollIntoView({block:'nearest'}); } }
+  else if (e.key === 'Enter')     { e.preventDefault(); if (filteredCmds[selIdx]) execCmd(filteredCmds[selIdx].id); }
 });
+commandOverlay.addEventListener('click', e => { if (e.target === commandOverlay) togglePalette(true); });
 
-commandInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') toggleCommandPalette(true);
-  else if (e.key === 'ArrowDown') {
-    e.preventDefault();
-    if (selectedIndex < filteredCommands.length - 1) {
-      selectedIndex++;
-      updateCommandSelection();
-    }
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault();
-    if (selectedIndex > 0) {
-      selectedIndex--;
-      updateCommandSelection();
-    }
-  } else if (e.key === 'Enter') {
-    e.preventDefault();
-    if (filteredCommands.length > 0) {
-      executeCommand(filteredCommands[selectedIndex].id);
-    }
-  }
-});
-
-commandOverlay.addEventListener('click', (e) => {
-  if (e.target === commandOverlay) toggleCommandPalette(true);
-});
-
-window.addEventListener('keydown', (e) => {
-  // Toggle on Ctrl+P (File switcher)
-  if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'p' || e.key === 'P')) {
-    e.preventDefault();
-    toggleCommandPalette(false, 'file');
-  }
-  // Toggle on Ctrl+Shift+P (Command palette)
-  else if (e.ctrlKey && e.shiftKey && !e.altKey && (e.key === 'p' || e.key === 'P')) {
-    e.preventDefault();
-    toggleCommandPalette(false, 'command');
-  }
-  // Ctrl+Alt+G — Toggle Neon Glow
-  else if (e.ctrlKey && e.altKey && (e.key === 'g' || e.key === 'G')) {
-    e.preventDefault();
-    executeCommand('toggle-glow');
-  }
-  // Ctrl+Alt+R — Toggle RGB Glow
-  else if (e.ctrlKey && e.altKey && (e.key === 'r' || e.key === 'R')) {
-    e.preventDefault();
-    executeCommand('toggle-rgb-glow');
-  }
-  // Ctrl+Alt+T — Toggle RGB Text
-  else if (e.ctrlKey && e.altKey && (e.key === 't' || e.key === 'T')) {
-    e.preventDefault();
-    executeCommand('toggle-rgb-text');
-  }
-  // Ctrl+Alt+Z — Toggle 300% Zoom
-  else if (e.ctrlKey && e.altKey && (e.key === 'z' || e.key === 'Z')) {
-    e.preventDefault();
-    executeCommand('toggle-zoom');
-  }
-});
-
-// ── Keymap Settings Logic ──────────────────────────────────────────────────
+// ── Keymap Settings ─────────────────────────────────────────────────────────────
 const keybindings = [
-  // Editor basics (CodeMirror built-in)
-  { id: 'editor.undo', command: 'Undo', keys: 'Ctrl+Z', source: 'Default' },
-  { id: 'editor.redo', command: 'Redo', keys: 'Ctrl+Y', source: 'Default' },
-  { id: 'editor.cut', command: 'Cut', keys: 'Ctrl+X', source: 'Default' },
-  { id: 'editor.copy', command: 'Copy', keys: 'Ctrl+C', source: 'Default' },
-  { id: 'editor.paste', command: 'Paste', keys: 'Ctrl+V', source: 'Default' },
-  { id: 'editor.selectAll', command: 'Select All', keys: 'Ctrl+A', source: 'Default' },
-  { id: 'editor.find', command: 'Find', keys: 'Ctrl+F', source: 'Default' },
-  { id: 'editor.replace', command: 'Find and Replace', keys: 'Ctrl+H', source: 'Default' },
-  { id: 'editor.addSelectionToNextFind', command: 'Add Selection To Next Find Match', keys: 'Ctrl+D', source: 'Default' },
-  { id: 'editor.indentLine', command: 'Indent Line', keys: 'Tab', source: 'Default' },
-  { id: 'editor.outdentLine', command: 'Outdent Line', keys: 'Shift+Tab', source: 'Default' },
-  // Workbench / file management
-  { id: 'workbench.quickOpen', command: 'Go to File (Quick Open)', keys: 'Ctrl+P', source: 'Default' },
-  { id: 'workbench.commandPalette', command: 'Open Command Palette', keys: 'Ctrl+Shift+P', source: 'Default' },
-  { id: 'workbench.openKeybindings', command: 'Open Keyboard Shortcuts', keys: 'Ctrl+K Ctrl+S', source: 'Default' },
-  { id: 'workbench.newFile', command: 'New File', keys: 'Ctrl+N', source: 'Default' },
-  { id: 'workbench.closeEditor', command: 'Close Editor', keys: 'Ctrl+W', source: 'Default' },
-  { id: 'editor.deleteFile', command: 'Delete Selected File', keys: 'Delete', source: 'Default' },
-  { id: 'editor.triggerSuggest', command: 'Trigger Autocomplete', keys: 'Ctrl+Space', source: 'Default' },
-  { id: 'debug.run', command: 'Run Code', keys: 'F5', source: 'Default' },
-  // Axiom IDE custom effects
-  { id: 'preferences.glow', command: 'Toggle Neon Glow Effect', keys: 'Ctrl+Alt+G', source: 'Default' },
-  { id: 'preferences.rgbGlow', command: 'Toggle RGB Moving Glow Effect', keys: 'Ctrl+Alt+R', source: 'Default' },
-  { id: 'preferences.rgbText', command: 'Toggle RGB Text Effect', keys: 'Ctrl+Alt+T', source: 'Default' },
-  { id: 'preferences.zoom', command: 'Toggle 300% Zoom Tracking', keys: 'Ctrl+Alt+Z', source: 'Default' },
+  { id: 'editor.undo',               command: 'Undo',                       keys: 'Ctrl+Z',          source: 'Default' },
+  { id: 'editor.redo',               command: 'Redo',                       keys: 'Ctrl+Y',          source: 'Default' },
+  { id: 'editor.cut',                command: 'Cut',                        keys: 'Ctrl+X',          source: 'Default' },
+  { id: 'editor.copy',               command: 'Copy',                       keys: 'Ctrl+C',          source: 'Default' },
+  { id: 'editor.paste',              command: 'Paste',                      keys: 'Ctrl+V',          source: 'Default' },
+  { id: 'editor.selectAll',          command: 'Select All',                 keys: 'Ctrl+A',          source: 'Default' },
+  { id: 'editor.find',               command: 'Find',                       keys: 'Ctrl+F',          source: 'Default' },
+  { id: 'editor.replace',            command: 'Find and Replace',           keys: 'Ctrl+H',          source: 'Default' },
+  { id: 'editor.addSelectionNext',   command: 'Add Next Occurrence',        keys: 'Ctrl+D',          source: 'Default' },
+  { id: 'editor.indent',             command: 'Indent Line',                keys: 'Tab',             source: 'Default' },
+  { id: 'editor.outdent',            command: 'Outdent Line',               keys: 'Shift+Tab',       source: 'Default' },
+  { id: 'workbench.quickOpen',       command: 'Go to File',                 keys: 'Ctrl+P',          source: 'Default' },
+  { id: 'workbench.commandPalette',  command: 'Open Command Palette',       keys: 'Ctrl+Shift+P',    source: 'Default' },
+  { id: 'workbench.openKeybindings', command: 'Open Keyboard Shortcuts',    keys: 'Ctrl+K Ctrl+S',   source: 'Default' },
+  { id: 'workbench.newFile',         command: 'New File',                   keys: 'Ctrl+N',          source: 'Default' },
+  { id: 'workbench.saveFile',        command: 'Save File',                  keys: 'Ctrl+S',          source: 'Default' },
+  { id: 'workbench.closeEditor',     command: 'Close Editor',               keys: 'Ctrl+W',          source: 'Default' },
+  { id: 'workbench.openFolder',      command: 'Open Folder',                keys: 'Ctrl+K Ctrl+O',   source: 'Default' },
+  { id: 'preferences.glow',         command: 'Toggle Neon Glow',           keys: 'Ctrl+Alt+G',      source: 'Default' },
+  { id: 'preferences.rgbGlow',      command: 'Toggle RGB Glow',            keys: 'Ctrl+Alt+R',      source: 'Default' },
+  { id: 'preferences.rgbText',      command: 'Toggle RGB Text',            keys: 'Ctrl+Alt+T',      source: 'Default' },
+  { id: 'preferences.zoom',         command: 'Toggle 300% Zoom',           keys: 'Ctrl+Alt+Z',      source: 'Default' },
 ];
 
 const keymapOverlay = document.getElementById('keymap-overlay');
-const keymapSearch = document.getElementById('keymap-search');
-const keymapTableBody = document.getElementById('keymap-table-body');
-let editingRowId = null;
+const keymapSearch  = document.getElementById('keymap-search');
+const keymapBody    = document.getElementById('keymap-table-body');
+let editRowId = null;
 
 function openKeymapSettings() {
   keymapOverlay.classList.add('active');
-  keymapSearch.value = '';
-  editingRowId = null;
-  renderKeymapRows();
-  setTimeout(() => keymapSearch.focus(), 50);
+  keymapSearch.value = ''; editRowId = null;
+  renderKeymapRows(); setTimeout(() => keymapSearch.focus(), 50);
 }
-
-function closeKeymapSettings() {
-  keymapOverlay.classList.remove('active');
-  editingRowId = null;
-  view.focus();
-}
+function closeKeymapSettings() { keymapOverlay.classList.remove('active'); editRowId = null; view.focus(); }
 
 document.getElementById('keymap-close-btn').addEventListener('click', closeKeymapSettings);
+keymapOverlay.addEventListener('click', e => { if (e.target === keymapOverlay) closeKeymapSettings(); });
+keymapOverlay.addEventListener('keydown', e => { if (e.key === 'Escape' && !editRowId) { e.preventDefault(); closeKeymapSettings(); } });
 
-keymapOverlay.addEventListener('click', (e) => {
-  if (e.target === keymapOverlay) closeKeymapSettings();
-});
-
-keymapOverlay.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !editingRowId) {
-    e.preventDefault();
-    closeKeymapSettings();
-  }
-});
-
-function formatKeybinding(keys) {
-  if (!keys) return '<span style="color: var(--text-muted); font-style: italic; font-size: 11px;">—</span>';
-  
+function fmtKeys(keys) {
+  if (!keys) return '<span style="color:var(--text-muted);font-style:italic;font-size:11px">—</span>';
   return keys.split(' ').map((chord, i) => {
-    const parts = chord.split('+');
-    const badges = parts.map(k => `<span class="kbd-badge">${k}</span>`).join('<span class="kbd-separator">+</span>');
-    return (i > 0 ? '<span class="kbd-separator" style="margin: 0 4px;"> </span>' : '') + badges;
+    const badges = chord.split('+').map(k => `<span class="kbd-badge">${k}</span>`).join('<span class="kbd-sep">+</span>');
+    return (i > 0 ? '<span class="kbd-sep" style="margin:0 4px"> </span>' : '') + badges;
   }).join('');
 }
 
-function renderKeymapRows(query = '') {
-  const search = query.toLowerCase();
-  const filtered = keybindings.filter(kb => {
-    return kb.command.toLowerCase().includes(search) ||
-           kb.keys.toLowerCase().includes(search) ||
-           kb.id.toLowerCase().includes(search);
-  });
-  
-  keymapTableBody.innerHTML = '';
-  
-  if (filtered.length === 0) {
-    keymapTableBody.innerHTML = '<div class="keymap-no-results">No keybindings found.</div>';
-    return;
-  }
-  
+function renderKeymapRows(q = '') {
+  const s = q.toLowerCase();
+  const filtered = keybindings.filter(kb => kb.command.toLowerCase().includes(s) || kb.keys.toLowerCase().includes(s) || kb.id.toLowerCase().includes(s));
+  keymapBody.innerHTML = '';
+  if (!filtered.length) { keymapBody.innerHTML = '<div class="keymap-no-results">No keybindings found.</div>'; return; }
   filtered.forEach(kb => {
     const row = document.createElement('div');
-    row.className = 'keymap-row' + (editingRowId === kb.id ? ' keymap-row-editing' : '');
+    row.className = 'keymap-row' + (editRowId === kb.id ? ' keymap-row-editing' : '');
     row.dataset.id = kb.id;
-    
-    if (editingRowId === kb.id) {
-      row.innerHTML = `
-        <span class="keymap-col-command">${kb.command}</span>
-        <span class="keymap-col-keybinding">
-          <input type="text" class="keymap-edit-input" id="keymap-edit-active"
-                 placeholder="Press desired key combination..."
-                 readonly />
-        </span>
-        <span class="keymap-col-source">${kb.source}</span>
-      `;
+    if (editRowId === kb.id) {
+      row.innerHTML = `<span class="keymap-col-command">${kb.command}</span><span class="keymap-col-keybinding"><input type="text" class="keymap-edit-input" id="keymap-edit-active" placeholder="Press key combo..." readonly/></span><span class="keymap-col-source">${kb.source}</span>`;
     } else {
-      row.innerHTML = `
-        <span class="keymap-col-command">${kb.command}</span>
-        <span class="keymap-col-keybinding">
-          <button class="keymap-edit-btn" title="Edit Keybinding"><i class="fa-solid fa-pencil"></i></button>
-          ${formatKeybinding(kb.keys)}
-        </span>
-        <span class="keymap-col-source">${kb.source}</span>
-      `;
+      row.innerHTML = `<span class="keymap-col-command">${kb.command}</span><span class="keymap-col-keybinding"><button class="keymap-edit-btn" title="Edit"><i class="fa-solid fa-pencil"></i></button>${fmtKeys(kb.keys)}</span><span class="keymap-col-source">${kb.source}</span>`;
     }
-    
-    keymapTableBody.appendChild(row);
-    
-    if (editingRowId === kb.id) {
-      const input = row.querySelector('#keymap-edit-active');
-      setTimeout(() => input.focus(), 30);
-      
-      input.addEventListener('keydown', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        
-        if (e.key === 'Escape') {
-          editingRowId = null;
-          renderKeymapRows(keymapSearch.value);
-          return;
-        }
-        
-        // Build the chord
-        const parts = [];
-        if (e.ctrlKey) parts.push('Ctrl');
-        if (e.shiftKey) parts.push('Shift');
-        if (e.altKey) parts.push('Alt');
-        if (e.metaKey) parts.push('Meta');
-        
-        const key = e.key;
-        if (!['Control', 'Shift', 'Alt', 'Meta'].includes(key)) {
-          let displayKey = key.length === 1 ? key.toUpperCase() : key;
-          if (key === 'ArrowUp') displayKey = 'Up';
-          if (key === 'ArrowDown') displayKey = 'Down';
-          if (key === 'ArrowLeft') displayKey = 'Left';
-          if (key === 'ArrowRight') displayKey = 'Right';
-          if (key === ' ') displayKey = 'Space';
-          parts.push(displayKey);
-          
-          kb.keys = parts.join('+');
-          kb.source = 'User';
-          editingRowId = null;
-          renderKeymapRows(keymapSearch.value);
-        } else {
-          input.value = parts.join('+') + '+...';
-        }
+    keymapBody.appendChild(row);
+    if (editRowId === kb.id) {
+      const inp = row.querySelector('#keymap-edit-active');
+      setTimeout(() => inp.focus(), 30);
+      inp.addEventListener('keydown', e => {
+        e.preventDefault(); e.stopPropagation();
+        if (e.key === 'Escape') { editRowId = null; renderKeymapRows(keymapSearch.value); return; }
+        const parts = [...(e.ctrlKey?['Ctrl']:[]), ...(e.shiftKey?['Shift']:[]), ...(e.altKey?['Alt']:[]), ...(e.metaKey?['Meta']:[])];
+        if (!['Control','Shift','Alt','Meta'].includes(e.key)) {
+          let dk = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+          if (e.key === 'ArrowUp') dk = 'Up'; if (e.key === 'ArrowDown') dk = 'Down';
+          if (e.key === 'ArrowLeft') dk = 'Left'; if (e.key === 'ArrowRight') dk = 'Right';
+          if (e.key === ' ') dk = 'Space';
+          parts.push(dk); kb.keys = parts.join('+'); kb.source = 'User';
+          editRowId = null; renderKeymapRows(keymapSearch.value);
+        } else inp.value = parts.join('+') + '+...';
       });
     } else {
-      const editBtn = row.querySelector('.keymap-edit-btn');
-      if (editBtn) {
-        editBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          editingRowId = kb.id;
-          renderKeymapRows(keymapSearch.value);
-        });
-      }
-      
-      row.addEventListener('dblclick', () => {
-        editingRowId = kb.id;
-        renderKeymapRows(keymapSearch.value);
-      });
+      row.querySelector('.keymap-edit-btn')?.addEventListener('click', e => { e.stopPropagation(); editRowId = kb.id; renderKeymapRows(keymapSearch.value); });
+      row.addEventListener('dblclick', () => { editRowId = kb.id; renderKeymapRows(keymapSearch.value); });
     }
   });
 }
+keymapSearch.addEventListener('input', e => renderKeymapRows(e.target.value));
 
-keymapSearch.addEventListener('input', (e) => {
-  renderKeymapRows(e.target.value);
-});
-
-// Ctrl+K Ctrl+S to open keyboard shortcuts
-let ctrlKPending = false;
-window.addEventListener('keydown', (e) => {
-  if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'k' || e.key === 'K')) {
-    e.preventDefault();
-    ctrlKPending = true;
-    return;
-  }
-  if (ctrlKPending && e.ctrlKey && (e.key === 's' || e.key === 'S')) {
-    e.preventDefault();
-    ctrlKPending = false;
-    openKeymapSettings();
-    return;
-  }
-  ctrlKPending = false;
-});
-
-// ── Top Menu Bar Logic ──────────────────────────────────────────────────────
+// ── Menu Bar ────────────────────────────────────────────────────────────────────
 let activeMenu = null;
-
-function closeAllMenus() {
-  document.querySelectorAll('.menu-item.open').forEach(el => el.classList.remove('open'));
-  activeMenu = null;
-}
-
+function closeAllMenus() { document.querySelectorAll('.menu-item.open').forEach(el => el.classList.remove('open')); activeMenu = null; }
 document.querySelectorAll('.menu-item').forEach(item => {
-  const label = item.querySelector('.menu-label');
-  
-  label.addEventListener('click', (e) => {
+  item.querySelector('.menu-label').addEventListener('click', e => {
     e.stopPropagation();
-    if (item.classList.contains('open')) {
-      closeAllMenus();
-    } else {
-      closeAllMenus();
-      item.classList.add('open');
-      activeMenu = item.dataset.menu;
-    }
+    if (item.classList.contains('open')) closeAllMenus();
+    else { closeAllMenus(); item.classList.add('open'); activeMenu = item.dataset.menu; }
   });
-  
   item.addEventListener('mouseenter', () => {
-    if (activeMenu && activeMenu !== item.dataset.menu) {
-      closeAllMenus();
-      item.classList.add('open');
-      activeMenu = item.dataset.menu;
-    }
+    if (activeMenu && activeMenu !== item.dataset.menu) { closeAllMenus(); item.classList.add('open'); activeMenu = item.dataset.menu; }
   });
 });
-
-document.querySelectorAll('.menu-entry').forEach(entry => {
-  entry.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const action = entry.dataset.action;
-    closeAllMenus();
-    handleMenuAction(action);
-  });
+document.querySelectorAll('.menu-entry').forEach(e => {
+  e.addEventListener('click', ev => { ev.stopPropagation(); closeAllMenus(); handleMenu(e.dataset.action); });
 });
+window.addEventListener('click', () => { if (activeMenu) closeAllMenus(); });
 
-window.addEventListener('click', () => {
-  if (activeMenu) closeAllMenus();
-});
-
-function handleMenuAction(action) {
+function handleMenu(action) {
   switch (action) {
-    // File
-    case 'new-file':
-      executeCommand('new-file');
-      break;
-    case 'new-project':
-      alert('New Project — awaiting Tauri implementation.');
-      break;
-    case 'open-file':
-      alert('Open File — awaiting Tauri file dialog.');
-      break;
-    case 'open-folder':
-      alert('Open Folder — awaiting Tauri folder dialog.');
-      break;
-    case 'open-recent':
-      alert('Open Recent — awaiting Tauri implementation.');
-      break;
-    case 'close-editor':
-      executeCommand('close-editor');
-      break;
-    case 'refresh-explorer':
-      renderExplorer();
-      break;
-    // Edit
-    case 'undo':
-      import('@codemirror/commands').then(m => m.undo(view));
-      break;
-    case 'redo':
-      import('@codemirror/commands').then(m => m.redo(view));
-      break;
-    case 'cut':
-      document.execCommand('cut');
-      break;
-    case 'copy':
-      document.execCommand('copy');
-      break;
-    case 'paste':
-      navigator.clipboard.readText().then(text => {
-        view.dispatch(view.state.replaceSelection(text));
-      }).catch(() => {});
-      break;
-    case 'find':
-      import('@codemirror/search').then(m => m.openSearchPanel(view));
-      break;
-    case 'replace':
-      import('@codemirror/search').then(m => m.openSearchPanel(view));
-      break;
-    // Selection
-    case 'select-all':
-      import('@codemirror/commands').then(m => m.selectAll(view));
-      break;
-    case 'add-cursor-next':
-      import('@codemirror/search').then(m => m.selectNextOccurrence(view));
-      break;
-    // View
-    case 'command-palette':
-      toggleCommandPalette(false, 'command');
-      break;
-    case 'keyboard-shortcuts':
-      openKeymapSettings();
-      break;
-    case 'toggle-glow':
-      executeCommand('toggle-glow');
-      break;
-    case 'toggle-rgb-glow':
-      executeCommand('toggle-rgb-glow');
-      break;
-    case 'toggle-rgb-text':
-      executeCommand('toggle-rgb-text');
-      break;
-    case 'toggle-zoom':
-      executeCommand('toggle-zoom');
-      break;
-    // Go
-    case 'go-to-file':
-      toggleCommandPalette(false, 'file');
-      break;
-    // Run
-    case 'run-code':
-      document.getElementById('run-btn').click();
-      break;
+    case 'new-file':          execCmd('new-file'); break;
+    case 'new-folder':        execCmd('new-folder'); break;
+    case 'open-folder':       openFolder(); break;
+    case 'save-file':         saveFile(); break;
+    case 'close-editor':      if (currentFile) closeTab(currentFile); break;
+    case 'refresh-explorer':  refreshTree(); break;
+    case 'undo':              import('@codemirror/commands').then(m => m.undo(view)); break;
+    case 'redo':              import('@codemirror/commands').then(m => m.redo(view)); break;
+    case 'cut':               document.execCommand('cut'); break;
+    case 'copy':              document.execCommand('copy'); break;
+    case 'paste':             navigator.clipboard.readText().then(t => view.dispatch(view.state.replaceSelection(t))).catch(()=>{}); break;
+    case 'find':              import('@codemirror/search').then(m => m.openSearchPanel(view)); break;
+    case 'replace':           import('@codemirror/search').then(m => m.openSearchPanel(view)); break;
+    case 'command-palette':   togglePalette(false, 'command'); break;
+    case 'keyboard-shortcuts':openKeymapSettings(); break;
+    case 'toggle-glow':       execCmd('toggle-glow'); break;
+    case 'toggle-rgb-glow':   execCmd('toggle-rgb-glow'); break;
+    case 'toggle-rgb-text':   execCmd('toggle-rgb-text'); break;
+    case 'toggle-zoom':       execCmd('toggle-zoom'); break;
+    case 'go-to-file':        togglePalette(false, 'file'); break;
   }
 }
+
+// ── Global Keyboard Shortcuts ───────────────────────────────────────────────────
+let ctrlKPending = false;
+window.addEventListener('keydown', async e => {
+  const ctrl = e.ctrlKey, shift = e.shiftKey, alt = e.altKey;
+  const k = e.key.toLowerCase();
+
+  if (ctrl && !shift && !alt && k === 's') { e.preventDefault(); await saveFile(); return; }
+  if (ctrl && !shift && !alt && k === 'n') { e.preventDefault(); execCmd('new-file'); return; }
+  if (ctrl && !shift && !alt && k === 'w') { e.preventDefault(); if (currentFile) closeTab(currentFile); return; }
+  if (ctrl && !shift && !alt && k === 'p') { e.preventDefault(); togglePalette(false, 'file'); return; }
+  if (ctrl && shift  && !alt && k === 'p') { e.preventDefault(); togglePalette(false, 'command'); return; }
+  if (ctrl && !shift && !alt && k === 'k') { e.preventDefault(); ctrlKPending = true; return; }
+  if (ctrlKPending) {
+    if (ctrl && k === 's') { e.preventDefault(); ctrlKPending = false; openKeymapSettings(); return; }
+    if (ctrl && k === 'o') { e.preventDefault(); ctrlKPending = false; openFolder(); return; }
+    ctrlKPending = false;
+  }
+  if (ctrl && alt && k === 'g') { e.preventDefault(); execCmd('toggle-glow'); return; }
+  if (ctrl && alt && k === 'r') { e.preventDefault(); execCmd('toggle-rgb-glow'); return; }
+  if (ctrl && alt && k === 't') { e.preventDefault(); execCmd('toggle-rgb-text'); return; }
+  if (ctrl && alt && k === 'z') { e.preventDefault(); execCmd('toggle-zoom'); return; }
+});
+
+// ── Init ────────────────────────────────────────────────────────────────────────
+showWelcome(true);
+renderExplorer();
+renderTabs();
