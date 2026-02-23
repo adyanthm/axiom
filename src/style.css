@@ -605,3 +605,237 @@ body.zoom-active .cm-editor {
 .cm-panel.cm-search button[name=close]:hover {
   background: var(--bg-hover) !important;
 }
+
+/* ── Keymap Settings Panel ── */
+#keymap-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 9998;
+  display: none;
+  justify-content: center;
+  align-items: center;
+}
+
+#keymap-overlay.active {
+  display: flex;
+}
+
+#keymap-panel {
+  width: 90vw;
+  max-width: 960px;
+  height: 80vh;
+  background: var(--bg-main);
+  border: 1px solid var(--context-border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+
+.keymap-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.keymap-header-left {
+  display: flex;
+  align-items: center;
+}
+
+.keymap-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-active);
+}
+
+.keymap-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.keymap-close-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-active);
+}
+
+.keymap-search-bar {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.keymap-search-bar input {
+  flex: 1;
+  background: var(--bg-hover);
+  border: 1px solid transparent;
+  color: var(--text-active);
+  padding: 6px 10px;
+  border-radius: 4px;
+  outline: none;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.keymap-search-bar input:focus {
+  border-color: var(--accent-color);
+}
+
+.keymap-table-header {
+  display: flex;
+  align-items: center;
+  padding: 6px 16px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.keymap-col-command {
+  flex: 2;
+}
+
+.keymap-col-keybinding {
+  flex: 1.5;
+}
+
+.keymap-col-source {
+  flex: 0.5;
+  text-align: right;
+}
+
+.keymap-table-body {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg-active) transparent;
+}
+
+.keymap-row {
+  display: flex;
+  align-items: center;
+  padding: 6px 16px;
+  font-size: 13px;
+  color: var(--text-main);
+  border-bottom: 1px solid var(--border-color);
+  cursor: default;
+  min-height: 34px;
+  transition: background 0.1s ease;
+}
+
+.keymap-row:hover {
+  background: var(--bg-hover);
+}
+
+.keymap-row .keymap-col-command {
+  flex: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 400;
+}
+
+.keymap-row .keymap-col-keybinding {
+  flex: 1.5;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.keymap-row .keymap-col-source {
+  flex: 0.5;
+  text-align: right;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.kbd-badge {
+  background: var(--bg-sidebar);
+  border: 1px solid var(--context-border);
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  color: var(--text-active);
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.kbd-separator {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin: 0 2px;
+}
+
+.keymap-edit-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.keymap-row:hover .keymap-edit-btn {
+  opacity: 1;
+}
+
+.keymap-edit-btn:hover {
+  background: var(--bg-active);
+  color: var(--text-active);
+}
+
+.keymap-edit-input {
+  background: var(--bg-hover);
+  border: 1px solid var(--accent-color);
+  color: var(--text-active);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 11px;
+  outline: none;
+  width: 180px;
+  height: 24px;
+}
+
+.keymap-row-editing {
+  background: rgba(82, 139, 255, 0.08) !important;
+}
+
+.keymap-no-results {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  color: var(--text-muted);
+  font-size: 13px;
+}

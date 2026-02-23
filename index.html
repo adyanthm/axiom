@@ -90,6 +90,34 @@
         </div>
       </div>
     </div>
+
+    <!-- Keymap Settings Panel -->
+    <div id="keymap-overlay">
+      <div id="keymap-panel">
+        <div class="keymap-header">
+          <div class="keymap-header-left">
+            <i class="fa-solid fa-keyboard" style="margin-right: 8px; color: var(--accent-color);"></i>
+            <span class="keymap-title">Keyboard Shortcuts</span>
+          </div>
+          <button class="keymap-close-btn" id="keymap-close-btn">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <div class="keymap-search-bar">
+          <i class="fa-solid fa-search" style="color: var(--text-muted); margin-right: 8px;"></i>
+          <input type="text" id="keymap-search" placeholder="Type to search in keybindings" autocomplete="off"
+            spellcheck="false" />
+        </div>
+        <div class="keymap-table-header">
+          <span class="keymap-col-command">Command</span>
+          <span class="keymap-col-keybinding">Keybinding</span>
+          <span class="keymap-col-source">Source</span>
+        </div>
+        <div class="keymap-table-body" id="keymap-table-body">
+          <!-- rows injected via JS -->
+        </div>
+      </div>
+    </div>
   </div>
   <script type="module" src="/src/main.js"></script>
 </body>

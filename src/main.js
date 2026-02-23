@@ -1,7 +1,7 @@
 import './style.css';
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from '@codemirror/view';
-import { defaultKeymap, indentWithTab } from '@codemirror/commands';
+import { defaultKeymap, indentWithTab, history, historyKeymap } from '@codemirror/commands';
 import { python } from '@codemirror/lang-python';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { autocompletion } from '@codemirror/autocomplete';
@@ -61,6 +61,7 @@ function createEditorState(content) {
   return EditorState.create({
     doc: content,
     extensions: [
+      history(),
       EditorState.allowMultipleSelections.of(true),
       drawSelection(),
       lineNumbers(),
@@ -68,7 +69,7 @@ function createEditorState(content) {
       highlightActiveLineGutter(),
       autocompletion(),
       search({top: true}),
-      keymap.of([...searchKeymap, ...defaultKeymap, indentWithTab]),
+      keymap.of([...searchKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
       python(),
       currentTheme,
       EditorView.lineWrapping,
@@ -84,10 +85,13 @@ function createEditorState(content) {
   });
 }
 
+let fileStates = {};
+
 let view = new EditorView({
   state: createEditorState(files[currentFile]),
   parent: document.getElementById('editor-wrap'),
 });
+fileStates[currentFile] = view.state;
 
 // ── File Management & Rendering ──────────────────────────────────────────────
 let openTabs = Object.keys(files);
@@ -105,6 +109,7 @@ function getFileIcon(filename) {
 function deleteFile(filename) {
   if (confirm(`Are you sure you want to delete ${filename}?`)) {
       delete files[filename];
+      delete fileStates[filename];
       if (openTabs.includes(filename)) {
           closeFile(filename);
       }
@@ -201,13 +206,20 @@ function closeFile(filename) {
 function openFile(filename) {
   if (files[filename] === undefined) return;
   
+  if (currentFile && fileStates[currentFile]) {
+      fileStates[currentFile] = view.state;
+  }
+  
   if (!openTabs.includes(filename)) openTabs.push(filename);
   currentFile = filename;
   
   document.getElementById('editor-wrap').style.display = 'flex';
   if(document.getElementById('editor-breadcrumb')) document.getElementById('editor-breadcrumb').style.display = 'flex';
   
-  view.setState(createEditorState(files[currentFile]));
+  if (!fileStates[currentFile]) {
+      fileStates[currentFile] = createEditorState(files[currentFile]);
+  }
+  view.setState(fileStates[currentFile]);
   
   const breadcrumbCurrent = document.getElementById('breadcrumb-current');
   if (breadcrumbCurrent) {
@@ -297,6 +309,11 @@ document.getElementById('ctx-rename').addEventListener('click', () => {
   if (newName && newName !== activeContextFile && !files[newName]) {
       files[newName] = files[activeContextFile];
       delete files[activeContextFile];
+      
+      if (fileStates[activeContextFile]) {
+          fileStates[newName] = fileStates[activeContextFile];
+          delete fileStates[activeContextFile];
+      }
       
       if (openTabs.includes(activeContextFile)) {
           openTabs[openTabs.indexOf(activeContextFile)] = newName;
@@ -415,7 +432,8 @@ const commands = [
   { id: 'toggle-zoom', label: 'Preferences: Toggle 300% Zoom Tracking' },
   { id: 'new-file', label: 'File: New File' },
   { id: 'new-folder', label: 'File: New Folder' },
-  { id: 'close-editor', label: 'View: Close Editor' }
+  { id: 'close-editor', label: 'View: Close Editor' },
+  { id: 'open-keybindings', label: 'Preferences: Open Keyboard Shortcuts' }
 ];
 
 let filteredCommands = [];
@@ -549,6 +567,8 @@ function executeCommand(id) {
   } else if (id === 'close-editor') {
     const activeClose = document.querySelector('.tab.active .tab-close');
     if(activeClose) activeClose.click();
+  } else if (id === 'open-keybindings') {
+    openKeymapSettings();
   }
 }
 
@@ -584,13 +604,226 @@ commandOverlay.addEventListener('click', (e) => {
 
 window.addEventListener('keydown', (e) => {
   // Toggle on Ctrl+P (File switcher)
-  if (e.ctrlKey && !e.shiftKey && (e.key === 'p' || e.key === 'P')) {
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'p' || e.key === 'P')) {
     e.preventDefault();
     toggleCommandPalette(false, 'file');
   }
   // Toggle on Ctrl+Shift+P (Command palette)
-  else if (e.ctrlKey && e.shiftKey && (e.key === 'p' || e.key === 'P')) {
+  else if (e.ctrlKey && e.shiftKey && !e.altKey && (e.key === 'p' || e.key === 'P')) {
     e.preventDefault();
     toggleCommandPalette(false, 'command');
   }
+  // Ctrl+Alt+G — Toggle Neon Glow
+  else if (e.ctrlKey && e.altKey && (e.key === 'g' || e.key === 'G')) {
+    e.preventDefault();
+    executeCommand('toggle-glow');
+  }
+  // Ctrl+Alt+R — Toggle RGB Glow
+  else if (e.ctrlKey && e.altKey && (e.key === 'r' || e.key === 'R')) {
+    e.preventDefault();
+    executeCommand('toggle-rgb-glow');
+  }
+  // Ctrl+Alt+T — Toggle RGB Text
+  else if (e.ctrlKey && e.altKey && (e.key === 't' || e.key === 'T')) {
+    e.preventDefault();
+    executeCommand('toggle-rgb-text');
+  }
+  // Ctrl+Alt+Z — Toggle 300% Zoom
+  else if (e.ctrlKey && e.altKey && (e.key === 'z' || e.key === 'Z')) {
+    e.preventDefault();
+    executeCommand('toggle-zoom');
+  }
+});
+
+// ── Keymap Settings Logic ──────────────────────────────────────────────────
+const keybindings = [
+  // Editor basics (CodeMirror built-in)
+  { id: 'editor.undo', command: 'Undo', keys: 'Ctrl+Z', source: 'Default' },
+  { id: 'editor.redo', command: 'Redo', keys: 'Ctrl+Y', source: 'Default' },
+  { id: 'editor.cut', command: 'Cut', keys: 'Ctrl+X', source: 'Default' },
+  { id: 'editor.copy', command: 'Copy', keys: 'Ctrl+C', source: 'Default' },
+  { id: 'editor.paste', command: 'Paste', keys: 'Ctrl+V', source: 'Default' },
+  { id: 'editor.selectAll', command: 'Select All', keys: 'Ctrl+A', source: 'Default' },
+  { id: 'editor.find', command: 'Find', keys: 'Ctrl+F', source: 'Default' },
+  { id: 'editor.replace', command: 'Find and Replace', keys: 'Ctrl+H', source: 'Default' },
+  { id: 'editor.addSelectionToNextFind', command: 'Add Selection To Next Find Match', keys: 'Ctrl+D', source: 'Default' },
+  { id: 'editor.indentLine', command: 'Indent Line', keys: 'Tab', source: 'Default' },
+  { id: 'editor.outdentLine', command: 'Outdent Line', keys: 'Shift+Tab', source: 'Default' },
+  // Workbench / file management
+  { id: 'workbench.quickOpen', command: 'Go to File (Quick Open)', keys: 'Ctrl+P', source: 'Default' },
+  { id: 'workbench.commandPalette', command: 'Open Command Palette', keys: 'Ctrl+Shift+P', source: 'Default' },
+  { id: 'workbench.openKeybindings', command: 'Open Keyboard Shortcuts', keys: 'Ctrl+K Ctrl+S', source: 'Default' },
+  { id: 'workbench.newFile', command: 'New File', keys: 'Ctrl+N', source: 'Default' },
+  { id: 'workbench.closeEditor', command: 'Close Editor', keys: 'Ctrl+W', source: 'Default' },
+  { id: 'editor.deleteFile', command: 'Delete Selected File', keys: 'Delete', source: 'Default' },
+  { id: 'editor.triggerSuggest', command: 'Trigger Autocomplete', keys: 'Ctrl+Space', source: 'Default' },
+  { id: 'debug.run', command: 'Run Code', keys: 'F5', source: 'Default' },
+  // Axiom IDE custom effects
+  { id: 'preferences.glow', command: 'Toggle Neon Glow Effect', keys: 'Ctrl+Alt+G', source: 'Default' },
+  { id: 'preferences.rgbGlow', command: 'Toggle RGB Moving Glow Effect', keys: 'Ctrl+Alt+R', source: 'Default' },
+  { id: 'preferences.rgbText', command: 'Toggle RGB Text Effect', keys: 'Ctrl+Alt+T', source: 'Default' },
+  { id: 'preferences.zoom', command: 'Toggle 300% Zoom Tracking', keys: 'Ctrl+Alt+Z', source: 'Default' },
+];
+
+const keymapOverlay = document.getElementById('keymap-overlay');
+const keymapSearch = document.getElementById('keymap-search');
+const keymapTableBody = document.getElementById('keymap-table-body');
+let editingRowId = null;
+
+function openKeymapSettings() {
+  keymapOverlay.classList.add('active');
+  keymapSearch.value = '';
+  editingRowId = null;
+  renderKeymapRows();
+  setTimeout(() => keymapSearch.focus(), 50);
+}
+
+function closeKeymapSettings() {
+  keymapOverlay.classList.remove('active');
+  editingRowId = null;
+  view.focus();
+}
+
+document.getElementById('keymap-close-btn').addEventListener('click', closeKeymapSettings);
+
+keymapOverlay.addEventListener('click', (e) => {
+  if (e.target === keymapOverlay) closeKeymapSettings();
+});
+
+keymapOverlay.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !editingRowId) {
+    e.preventDefault();
+    closeKeymapSettings();
+  }
+});
+
+function formatKeybinding(keys) {
+  if (!keys) return '<span style="color: var(--text-muted); font-style: italic; font-size: 11px;">—</span>';
+  
+  return keys.split(' ').map((chord, i) => {
+    const parts = chord.split('+');
+    const badges = parts.map(k => `<span class="kbd-badge">${k}</span>`).join('<span class="kbd-separator">+</span>');
+    return (i > 0 ? '<span class="kbd-separator" style="margin: 0 4px;"> </span>' : '') + badges;
+  }).join('');
+}
+
+function renderKeymapRows(query = '') {
+  const search = query.toLowerCase();
+  const filtered = keybindings.filter(kb => {
+    return kb.command.toLowerCase().includes(search) ||
+           kb.keys.toLowerCase().includes(search) ||
+           kb.id.toLowerCase().includes(search);
+  });
+  
+  keymapTableBody.innerHTML = '';
+  
+  if (filtered.length === 0) {
+    keymapTableBody.innerHTML = '<div class="keymap-no-results">No keybindings found.</div>';
+    return;
+  }
+  
+  filtered.forEach(kb => {
+    const row = document.createElement('div');
+    row.className = 'keymap-row' + (editingRowId === kb.id ? ' keymap-row-editing' : '');
+    row.dataset.id = kb.id;
+    
+    if (editingRowId === kb.id) {
+      row.innerHTML = `
+        <span class="keymap-col-command">${kb.command}</span>
+        <span class="keymap-col-keybinding">
+          <input type="text" class="keymap-edit-input" id="keymap-edit-active"
+                 placeholder="Press desired key combination..."
+                 readonly />
+        </span>
+        <span class="keymap-col-source">${kb.source}</span>
+      `;
+    } else {
+      row.innerHTML = `
+        <span class="keymap-col-command">${kb.command}</span>
+        <span class="keymap-col-keybinding">
+          <button class="keymap-edit-btn" title="Edit Keybinding"><i class="fa-solid fa-pencil"></i></button>
+          ${formatKeybinding(kb.keys)}
+        </span>
+        <span class="keymap-col-source">${kb.source}</span>
+      `;
+    }
+    
+    keymapTableBody.appendChild(row);
+    
+    if (editingRowId === kb.id) {
+      const input = row.querySelector('#keymap-edit-active');
+      setTimeout(() => input.focus(), 30);
+      
+      input.addEventListener('keydown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        if (e.key === 'Escape') {
+          editingRowId = null;
+          renderKeymapRows(keymapSearch.value);
+          return;
+        }
+        
+        // Build the chord
+        const parts = [];
+        if (e.ctrlKey) parts.push('Ctrl');
+        if (e.shiftKey) parts.push('Shift');
+        if (e.altKey) parts.push('Alt');
+        if (e.metaKey) parts.push('Meta');
+        
+        const key = e.key;
+        if (!['Control', 'Shift', 'Alt', 'Meta'].includes(key)) {
+          let displayKey = key.length === 1 ? key.toUpperCase() : key;
+          if (key === 'ArrowUp') displayKey = 'Up';
+          if (key === 'ArrowDown') displayKey = 'Down';
+          if (key === 'ArrowLeft') displayKey = 'Left';
+          if (key === 'ArrowRight') displayKey = 'Right';
+          if (key === ' ') displayKey = 'Space';
+          parts.push(displayKey);
+          
+          kb.keys = parts.join('+');
+          kb.source = 'User';
+          editingRowId = null;
+          renderKeymapRows(keymapSearch.value);
+        } else {
+          input.value = parts.join('+') + '+...';
+        }
+      });
+    } else {
+      const editBtn = row.querySelector('.keymap-edit-btn');
+      if (editBtn) {
+        editBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          editingRowId = kb.id;
+          renderKeymapRows(keymapSearch.value);
+        });
+      }
+      
+      row.addEventListener('dblclick', () => {
+        editingRowId = kb.id;
+        renderKeymapRows(keymapSearch.value);
+      });
+    }
+  });
+}
+
+keymapSearch.addEventListener('input', (e) => {
+  renderKeymapRows(e.target.value);
+});
+
+// Ctrl+K Ctrl+S to open keyboard shortcuts
+let ctrlKPending = false;
+window.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'k' || e.key === 'K')) {
+    e.preventDefault();
+    ctrlKPending = true;
+    return;
+  }
+  if (ctrlKPending && e.ctrlKey && (e.key === 's' || e.key === 'S')) {
+    e.preventDefault();
+    ctrlKPending = false;
+    openKeymapSettings();
+    return;
+  }
+  ctrlKPending = false;
 });
