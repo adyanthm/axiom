@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Axiom IDE</title>
+  <meta name="description" content="Axiom IDE - Python code editor." />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+
+<body>
+  <div id="app">
+    <!-- Main Content -->
+    <div id="main-content">
+      <!-- Sidebar -->
+      <div id="sidebar" style="width: 250px;">
+        <!-- Sidebar Content -->
+        <div id="sidebar-content">
+          <div class="sidebar-section">
+            <div class="sidebar-section-title">
+              <div class="title-left">
+                <i class="fa-solid fa-chevron-down"></i> AXIOM_PROJECT
+              </div>
+              <div class="title-actions">
+                <i class="fa-solid fa-file-circle-plus action-icon" id="action-new-file" title="New File"></i>
+                <i class="fa-solid fa-folder-plus action-icon" id="action-new-folder" title="New Folder"></i>
+                <i class="fa-solid fa-rotate-right action-icon" id="action-refresh" title="Refresh Explorer"></i>
+                <i class="fa-solid fa-compress action-icon" id="action-collapse" title="Collapse Folders"></i>
+              </div>
+            </div>
+            <div class="file-list" id="file-explorer">
+              <div class="file-item active" data-file="main.py">
+                <i class="fa-brands fa-python" style="color: #4B8BBE;"></i> <span class="file-name">main.py</span>
+              </div>
+              <div class="file-item" data-file="utils.py">
+                <i class="fa-brands fa-python" style="color: #4B8BBE;"></i> <span class="file-name">utils.py</span>
+              </div>
+              <div class="file-item" data-file="config.json">
+                <i class="fa-solid fa-code" style="color: #e06c75;"></i> <span class="file-name">config.json</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resizer -->
+      <div id="resizer"></div>
+
+      <!-- Editor Area -->
+      <div id="editor-area">
+        <div class="editor-header">
+          <div class="tabs" id="tabs-container">
+            <div class="tab active" data-file="main.py">
+              <i class="fa-brands fa-python" style="color: #4B8BBE; margin-right: 6px;"></i>
+              <span class="tab-title">main.py</span>
+              <div class="tab-close"><i class="fa-solid fa-xmark"></i></div>
+            </div>
+            <div class="tab" data-file="utils.py">
+              <i class="fa-brands fa-python" style="color: #4B8BBE; margin-right: 6px;"></i>
+              <span class="tab-title">utils.py</span>
+              <div class="tab-close"><i class="fa-solid fa-xmark"></i></div>
+            </div>
+            <div class="tab" data-file="config.json">
+              <i class="fa-solid fa-code" style="color: #e06c75; margin-right: 6px;"></i>
+              <span class="tab-title">config.json</span>
+              <div class="tab-close"><i class="fa-solid fa-xmark"></i></div>
+            </div>
+          </div>
+          <div class="editor-actions">
+            <button id="run-btn" title="Run Code">
+              <i class="fa-solid fa-play"></i>
+            </button>
+          </div>
+        </div>
+        <!-- Breadcrumbs -->
+        <div class="editor-breadcrumb" id="editor-breadcrumb">
+          <span class="crumb">AxiomIDE_Web</span>
+          <i class="fa-solid fa-chevron-right crumb-separator"></i>
+          <span class="crumb">src</span>
+          <i class="fa-solid fa-chevron-right crumb-separator"></i>
+          <span class="crumb current-file-crumb" id="breadcrumb-current"><i class="fa-brands fa-python"
+              style="color: #4B8BBE; margin-right: 6px;"></i>main.py</span>
+        </div>
+        <!-- CodeMirror mounts here -->
+        <div id="editor-wrap"></div>
+      </div>
+    </div>
+
+    <!-- Status bar -->
+    <div id="statusbar">
+      <span>Python 3.11.0</span>
+      <span id="sb-cursor">Ln 1, Col 1</span>
+      <span class="sep"></span>
+      <span id="sb-words">0 words</span>
+      <span>UTF-8</span>
+    </div>
+
+    <!-- Context Menu -->
+    <div id="context-menu" class="hidden">
+      <div class="context-item" id="ctx-rename">Rename</div>
+      <div class="context-item" id="ctx-delete">Delete</div>
+      <div class="context-item" id="ctx-copy">Copy Path</div>
+    </div>
+
+    <!-- Command Palette -->
+    <div id="command-palette-overlay">
+      <div id="command-palette" aria-modal="true">
+        <input type="text" id="command-input" placeholder="Type a command..." autocomplete="off" spellcheck="false" />
+        <div class="palette-list" id="palette-list">
+          <!-- Items injected via JS -->
+        </div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+
+</html>
