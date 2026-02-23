@@ -89,101 +89,146 @@ let view = new EditorView({
   parent: document.getElementById('editor-wrap'),
 });
 
-// File Opener Setup (Easy to rig to Tauri later)
+// ── File Management & Rendering ──────────────────────────────────────────────
+let openTabs = Object.keys(files);
+let activeContextFile = null;
+
+function getFileIcon(filename) {
+  if (filename.endsWith('.py')) return '<i class="fa-brands fa-python" style="color: #4B8BBE;"></i>';
+  if (filename.endsWith('.json')) return '<i class="fa-solid fa-code" style="color: #e06c75;"></i>';
+  if (filename.endsWith('.js')) return '<i class="fa-brands fa-js" style="color: #F7DF1E;"></i>';
+  if (filename.endsWith('.css')) return '<i class="fa-brands fa-css3-alt" style="color: #1572B6;"></i>';
+  if (filename.endsWith('.html')) return '<i class="fa-brands fa-html5" style="color: #E34F26;"></i>';
+  return '<i class="fa-solid fa-file" style="color: #888;"></i>';
+}
+
+function deleteFile(filename) {
+  if (confirm(`Are you sure you want to delete ${filename}?`)) {
+      delete files[filename];
+      if (openTabs.includes(filename)) {
+          closeFile(filename);
+      }
+      renderExplorer();
+      renderTabs();
+  }
+}
+
+function renderExplorer() {
+  const explorer = document.getElementById('file-explorer');
+  if (!explorer) return;
+  explorer.innerHTML = '';
+  
+  Object.keys(files).sort().forEach(filename => {
+      const div = document.createElement('div');
+      div.className = 'file-item' + (filename === currentFile ? ' active' : '');
+      div.dataset.file = filename;
+      div.tabIndex = 0; // Make focusable
+      div.innerHTML = `${getFileIcon(filename)} <span class="file-name">${filename}</span>`;
+      
+      div.addEventListener('click', () => {
+          openFile(filename);
+          div.focus();
+      });
+      div.addEventListener('keydown', (e) => {
+          if (e.key === 'Delete') {
+              e.preventDefault();
+              deleteFile(filename);
+          }
+      });
+      div.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          activeContextFile = filename;
+          const contextMenu = document.getElementById('context-menu');
+          contextMenu.style.left = e.pageX + 'px';
+          contextMenu.style.top = e.pageY + 'px';
+          contextMenu.classList.remove('hidden');
+          div.focus();
+      });
+      
+      explorer.appendChild(div);
+  });
+}
+
+function renderTabs() {
+  const tabsContainer = document.getElementById('tabs-container');
+  if (!tabsContainer) return;
+  tabsContainer.innerHTML = '';
+  
+  openTabs.forEach(filename => {
+      const div = document.createElement('div');
+      div.className = 'tab' + (filename === currentFile ? ' active' : '');
+      div.dataset.file = filename;
+      div.innerHTML = `
+          ${getFileIcon(filename)}
+          <span class="tab-title" style="margin-left: 6px;">${filename}</span>
+          <div class="tab-close"><i class="fa-solid fa-xmark"></i></div>
+      `;
+      
+      div.addEventListener('click', (e) => {
+          if (e.target.closest('.tab-close')) return;
+          openFile(filename);
+      });
+      
+      const closeBtn = div.querySelector('.tab-close');
+      closeBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          closeFile(filename);
+      });
+      
+      tabsContainer.appendChild(div);
+  });
+}
+
+function closeFile(filename) {
+  openTabs = openTabs.filter(f => f !== filename);
+  if (filename === currentFile) {
+      if (openTabs.length > 0) {
+          openFile(openTabs[0]);
+      } else {
+          currentFile = null;
+          document.getElementById('editor-wrap').style.display = 'none';
+          if(document.getElementById('editor-breadcrumb')) document.getElementById('editor-breadcrumb').style.display = 'none';
+          renderExplorer();
+          renderTabs();
+          if (document.getElementById('sb-cursor')) document.getElementById('sb-cursor').textContent = "";
+          if (document.getElementById('sb-words')) document.getElementById('sb-words').textContent = "0 words";
+      }
+  } else {
+      renderTabs();
+  }
+}
+
 function openFile(filename) {
   if (files[filename] === undefined) return;
   
-  // Show the editor in case it was hidden
+  if (!openTabs.includes(filename)) openTabs.push(filename);
+  currentFile = filename;
+  
   document.getElementById('editor-wrap').style.display = 'flex';
   if(document.getElementById('editor-breadcrumb')) document.getElementById('editor-breadcrumb').style.display = 'flex';
   
-  // Update current file
-  currentFile = filename;
-  
-  // Reload state with the corresponding file content
   view.setState(createEditorState(files[currentFile]));
   
-  // Update styling for explorer items
-  document.querySelectorAll('.file-item').forEach(el => {
-    if (el.dataset.file === filename) el.classList.add('active');
-    else el.classList.remove('active');
-  });
-
-  // Update styling for tabs
-  document.querySelectorAll('.tab').forEach(el => {
-    if (el.dataset.file === filename) el.classList.add('active');
-    else el.classList.remove('active');
-  });
-
-  // Update breadcrumb
   const breadcrumbCurrent = document.getElementById('breadcrumb-current');
   if (breadcrumbCurrent) {
-    let iconHTML = '';
-    if (filename.endsWith('.py')) {
-      iconHTML = '<i class="fa-brands fa-python" style="color: #4B8BBE; margin-right: 6px;"></i>';
-    } else if (filename.endsWith('.json')) {
-      iconHTML = '<i class="fa-solid fa-code" style="color: #e06c75; margin-right: 6px;"></i>';
-    }
-    breadcrumbCurrent.innerHTML = iconHTML + filename;
+      breadcrumbCurrent.innerHTML = getFileIcon(filename) + '<span style="margin-left: 6px;">' + filename + '</span>';
   }
   
+  // Update styling for explorer items without destroying DOM
+  document.querySelectorAll('.file-item').forEach(el => {
+      if (el.dataset.file === filename) el.classList.add('active');
+      else el.classList.remove('active');
+  });
+  
+  renderTabs();
   updateStatus();
 };
 
 window.openFile = openFile;
 
-function bindTabEvents() {
-  document.querySelectorAll('.tab').forEach(el => {
-    // Only bind if we haven't already
-    if (el.dataset.bound) return;
-    el.dataset.bound = "true";
-    
-    // Clicking the tab switches to it
-    el.addEventListener('click', (e) => {
-      // Ignore click if clicking the close button
-      if (e.target.closest('.tab-close')) return;
-      openFile(el.dataset.file);
-    });
-
-    // Clicking the close button
-    const closeBtn = el.querySelector('.tab-close');
-    if (closeBtn) {
-      closeBtn.addEventListener('click', (e) => {
-        e.stopPropagation(); // prevent triggering the tab click
-        const fileToClose = el.dataset.file;
-        el.remove();
-        
-        // If we closed the currently active file, we should open another one (or clear out)
-        if (fileToClose === currentFile) {
-          const remainingTabs = document.querySelectorAll('.tab');
-          if (remainingTabs.length > 0) {
-            // Open the first remaining tab
-            openFile(remainingTabs[0].dataset.file);
-          } else {
-            // Empty state!
-            currentFile = null;
-            document.getElementById('editor-wrap').style.display = 'none';
-            if(document.getElementById('editor-breadcrumb')) document.getElementById('editor-breadcrumb').style.display = 'none';
-            document.querySelectorAll('.file-item.active').forEach(i => i.classList.remove('active'));
-            // Reset status bar
-            if (document.getElementById('sb-cursor')) document.getElementById('sb-cursor').textContent = "";
-            if (document.getElementById('sb-words')) document.getElementById('sb-words').textContent = "0 words";
-          }
-        }
-      });
-    }
-  });
-}
-
-// UI Listeners for file clicks
-document.querySelectorAll('.file-item').forEach(el => {
-  el.addEventListener('click', () => {
-    // If the tab doesn't exist, we could create it, but for our dummy showcase we assume it's there.
-    openFile(el.dataset.file);
-  });
-});
-
-bindTabEvents();
+// Initial render
+renderExplorer();
+renderTabs();
 
 // ── Sidebar Resizer Logic ──────────────────────────────────────────────────
 const resizer = document.getElementById('resizer');
@@ -213,10 +258,17 @@ window.addEventListener('mouseup', () => {
   }
 });
 
-// ── Explorer Toolbar Actions (Dummy to be rigged later) ───────────────────
+// ── Explorer Toolbar Actions ──────────────────────────────────────────────────
 document.getElementById('action-new-file').addEventListener('click', (e) => {
   e.stopPropagation();
-  alert("Dummy action: Creating a new file (awaiting Tauri impl.)");
+  const filename = prompt("Enter new file name:");
+  if (filename && !files[filename]) {
+      files[filename] = "";
+      renderExplorer();
+      openFile(filename);
+  } else if (filename && files[filename]) {
+      alert("File already exists!");
+  }
 });
 document.getElementById('action-new-folder').addEventListener('click', (e) => {
   e.stopPropagation();
@@ -224,27 +276,15 @@ document.getElementById('action-new-folder').addEventListener('click', (e) => {
 });
 document.getElementById('action-refresh').addEventListener('click', (e) => {
   e.stopPropagation();
-  alert("Dummy action: Refreshing Explorer (awaiting Tauri impl.)");
+  renderExplorer();
 });
 document.getElementById('action-collapse').addEventListener('click', (e) => {
   e.stopPropagation();
   alert("Dummy action: Collapsing all folders (awaiting Tauri impl.)");
 });
 
-// ── Context Menu Logic (Dummy to be rigged later) ─────────────────────────
+// ── Context Menu Logic ────────────────────────────────────────────────────────
 const contextMenu = document.getElementById('context-menu');
-let activeContextFile = null;
-
-// Attach right-click listeners to file items
-document.querySelectorAll('.file-item').forEach(el => {
-  el.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    activeContextFile = el.dataset.file;
-    contextMenu.style.left = e.pageX + 'px';
-    contextMenu.style.top = e.pageY + 'px';
-    contextMenu.classList.remove('hidden');
-  });
-});
 
 // Hide context menu on global map clicks
 window.addEventListener('click', () => {
@@ -253,13 +293,36 @@ window.addEventListener('click', () => {
 
 // Context Menu actions
 document.getElementById('ctx-rename').addEventListener('click', () => {
-  alert(`Dummy action: Renaming \${activeContextFile}`);
+  const newName = prompt(`Rename ${activeContextFile} to:`, activeContextFile);
+  if (newName && newName !== activeContextFile && !files[newName]) {
+      files[newName] = files[activeContextFile];
+      delete files[activeContextFile];
+      
+      if (openTabs.includes(activeContextFile)) {
+          openTabs[openTabs.indexOf(activeContextFile)] = newName;
+      }
+      
+      if (currentFile === activeContextFile) {
+          currentFile = newName;
+          openFile(newName);
+      } else {
+          renderExplorer();
+          renderTabs();
+      }
+  } else if (newName && files[newName]) {
+      alert("File already exists!");
+  }
+  contextMenu.classList.add('hidden');
 });
+
 document.getElementById('ctx-delete').addEventListener('click', () => {
-  alert(`Dummy action: Deleting \${activeContextFile}`);
+  deleteFile(activeContextFile);
+  contextMenu.classList.add('hidden');
 });
+
 document.getElementById('ctx-copy').addEventListener('click', () => {
-  alert(`Dummy action: Copying path of \${activeContextFile}`);
+  navigator.clipboard.writeText(activeContextFile).catch(() => {});
+  contextMenu.classList.add('hidden');
 });
 
 // Run Button Logic
@@ -358,28 +421,41 @@ const commands = [
 let filteredCommands = [];
 let selectedIndex = 0;
 
-function toggleCommandPalette(forceClose = false) {
+function toggleCommandPalette(forceClose = false, mode = 'command') {
   if (forceClose || commandOverlay.classList.contains('active')) {
     commandOverlay.classList.remove('active');
     view.focus();
   } else {
     commandOverlay.classList.add('active');
-    commandInput.value = '>';
-    renderCommands('>');
+    if (mode === 'command') {
+      commandInput.value = '>';
+      renderCommands('>');
+    } else {
+      commandInput.value = '';
+      renderCommands('');
+    }
     setTimeout(() => commandInput.focus(), 50);
   }
 }
 
 function renderCommands(query) {
-  const search = query.startsWith('>') ? query.slice(1).trim().toLowerCase() : query.trim().toLowerCase();
-  filteredCommands = commands.filter(c => c.label.toLowerCase().includes(search));
+  if (query.startsWith('>')) {
+    const search = query.slice(1).trim().toLowerCase();
+    filteredCommands = commands.filter(c => c.label.toLowerCase().includes(search));
+  } else {
+    const search = query.toLowerCase();
+    filteredCommands = Object.keys(files)
+        .filter(f => f.toLowerCase().includes(search))
+        .map(f => ({ id: 'open-file:' + f, label: f, isFile: true }));
+  }
+  
   selectedIndex = 0;
   
   paletteList.innerHTML = '';
   filteredCommands.forEach((cmd, idx) => {
     const el = document.createElement('div');
     el.className = 'palette-item' + (idx === 0 ? ' active' : '');
-    el.textContent = cmd.label;
+    el.innerHTML = cmd.isFile ? `${getFileIcon(cmd.label)} <span style="margin-left:8px;">${cmd.label}</span>` : cmd.label;
     el.onclick = () => executeCommand(cmd.id);
     
     el.addEventListener('mouseenter', () => {
@@ -403,6 +479,12 @@ function updateCommandSelection() {
 
 function executeCommand(id) {
   toggleCommandPalette(true);
+  
+  if (id.startsWith('open-file:')) {
+    const filename = id.split(':')[1];
+    openFile(filename);
+    return;
+  }
   
   if (id === 'toggle-glow') {
     isGlowEnabled = !isGlowEnabled;
@@ -454,9 +536,16 @@ function executeCommand(id) {
       view.dom.style.removeProperty('--caret-y');
     }
   } else if (id === 'new-file') {
-    alert("Dummy Action: New File");
+    const filename = prompt("Enter new file name:");
+    if (filename && !files[filename]) {
+        files[filename] = "";
+        renderExplorer();
+        openFile(filename);
+    } else if (filename && files[filename]) {
+        alert("File already exists!");
+    }
   } else if (id === 'new-folder') {
-    alert("Dummy Action: New Folder");
+    alert("Dummy Action: New Folder (awaiting Tauri impl.)");
   } else if (id === 'close-editor') {
     const activeClose = document.querySelector('.tab.active .tab-close');
     if(activeClose) activeClose.click();
@@ -494,9 +583,14 @@ commandOverlay.addEventListener('click', (e) => {
 });
 
 window.addEventListener('keydown', (e) => {
-  // Toggle on Ctrl+Shift+P
-  if (e.ctrlKey && e.shiftKey && (e.key === 'p' || e.key === 'P')) {
+  // Toggle on Ctrl+P (File switcher)
+  if (e.ctrlKey && !e.shiftKey && (e.key === 'p' || e.key === 'P')) {
     e.preventDefault();
-    toggleCommandPalette();
+    toggleCommandPalette(false, 'file');
+  }
+  // Toggle on Ctrl+Shift+P (Command palette)
+  else if (e.ctrlKey && e.shiftKey && (e.key === 'p' || e.key === 'P')) {
+    e.preventDefault();
+    toggleCommandPalette(false, 'command');
   }
 });
