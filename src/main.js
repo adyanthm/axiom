@@ -9,46 +9,10 @@ import { searchKeymap, search } from '@codemirror/search';
 
 // ── Dummy Files Storage ────────────────────────────────────────────────────────
 const files = {
-  'main.py': `import os
-import sys
+  'main.py': `def greet():
+    print("Hello from Axiom IDE!")
 
-def main():
-    print("Welcome to Axiom IDE")
-    print(f"Python version: {sys.version}")
-    
-    # Let's write some real logic
-    data = [1, 2, 3, 4, 5]
-    total = sum(data)
-    print(f"Total: {total}")
-
-if __name__ == "__main__":
-    main()
-`,
-  'utils.py': `def calculate_average(numbers: list[float]) -> float:
-    """Calculate the average of a list of numbers."""
-    if not numbers:
-        return 0.0
-    return sum(numbers) / len(numbers)
-
-def format_currency(amount: float) -> str:
-    """Format a float as currency."""
-    return f"\${amount:,.2f}"
-
-def get_platform_info() -> str:
-    """Returns basic platform identifier."""
-    import sys
-    return sys.platform
-`,
-  'config.json': `{
-  "projectName": "AxiomApp",
-  "version": "1.0.0",
-  "pythonVersion": "3.11",
-  "dependencies": [
-    "requests",
-    "numpy",
-    "pandas"
-  ]
-}
+greet()
 `
 };
 
@@ -827,3 +791,132 @@ window.addEventListener('keydown', (e) => {
   }
   ctrlKPending = false;
 });
+
+// ── Top Menu Bar Logic ──────────────────────────────────────────────────────
+let activeMenu = null;
+
+function closeAllMenus() {
+  document.querySelectorAll('.menu-item.open').forEach(el => el.classList.remove('open'));
+  activeMenu = null;
+}
+
+document.querySelectorAll('.menu-item').forEach(item => {
+  const label = item.querySelector('.menu-label');
+  
+  label.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (item.classList.contains('open')) {
+      closeAllMenus();
+    } else {
+      closeAllMenus();
+      item.classList.add('open');
+      activeMenu = item.dataset.menu;
+    }
+  });
+  
+  item.addEventListener('mouseenter', () => {
+    if (activeMenu && activeMenu !== item.dataset.menu) {
+      closeAllMenus();
+      item.classList.add('open');
+      activeMenu = item.dataset.menu;
+    }
+  });
+});
+
+document.querySelectorAll('.menu-entry').forEach(entry => {
+  entry.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const action = entry.dataset.action;
+    closeAllMenus();
+    handleMenuAction(action);
+  });
+});
+
+window.addEventListener('click', () => {
+  if (activeMenu) closeAllMenus();
+});
+
+function handleMenuAction(action) {
+  switch (action) {
+    // File
+    case 'new-file':
+      executeCommand('new-file');
+      break;
+    case 'new-project':
+      alert('New Project — awaiting Tauri implementation.');
+      break;
+    case 'open-file':
+      alert('Open File — awaiting Tauri file dialog.');
+      break;
+    case 'open-folder':
+      alert('Open Folder — awaiting Tauri folder dialog.');
+      break;
+    case 'open-recent':
+      alert('Open Recent — awaiting Tauri implementation.');
+      break;
+    case 'close-editor':
+      executeCommand('close-editor');
+      break;
+    case 'refresh-explorer':
+      renderExplorer();
+      break;
+    // Edit
+    case 'undo':
+      import('@codemirror/commands').then(m => m.undo(view));
+      break;
+    case 'redo':
+      import('@codemirror/commands').then(m => m.redo(view));
+      break;
+    case 'cut':
+      document.execCommand('cut');
+      break;
+    case 'copy':
+      document.execCommand('copy');
+      break;
+    case 'paste':
+      navigator.clipboard.readText().then(text => {
+        view.dispatch(view.state.replaceSelection(text));
+      }).catch(() => {});
+      break;
+    case 'find':
+      import('@codemirror/search').then(m => m.openSearchPanel(view));
+      break;
+    case 'replace':
+      import('@codemirror/search').then(m => m.openSearchPanel(view));
+      break;
+    // Selection
+    case 'select-all':
+      import('@codemirror/commands').then(m => m.selectAll(view));
+      break;
+    case 'add-cursor-next':
+      import('@codemirror/search').then(m => m.selectNextOccurrence(view));
+      break;
+    // View
+    case 'command-palette':
+      toggleCommandPalette(false, 'command');
+      break;
+    case 'keyboard-shortcuts':
+      openKeymapSettings();
+      break;
+    case 'toggle-glow':
+      executeCommand('toggle-glow');
+      break;
+    case 'toggle-rgb-glow':
+      executeCommand('toggle-rgb-glow');
+      break;
+    case 'toggle-rgb-text':
+      executeCommand('toggle-rgb-text');
+      break;
+    case 'toggle-zoom':
+      executeCommand('toggle-zoom');
+      break;
+    // Go
+    case 'go-to-file':
+      toggleCommandPalette(false, 'file');
+      break;
+    // Run
+    case 'run-code':
+      document.getElementById('run-btn').click();
+      break;
+  }
+}

@@ -48,6 +48,93 @@ body {
   height: 100vh;
 }
 
+/* ── Top Menu Bar ── */
+#menubar {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+  padding: 0 4px;
+  z-index: 500;
+}
+
+.menu-item {
+  position: relative;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.menu-label {
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 0 8px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.menu-label:hover,
+.menu-item.open .menu-label {
+  color: var(--text-active);
+  background: var(--bg-hover);
+}
+
+.menu-dropdown {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 240px;
+  background: var(--context-bg);
+  border: 1px solid var(--context-border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  padding: 4px 0;
+  z-index: 9000;
+}
+
+.menu-item.open .menu-dropdown {
+  display: block;
+}
+
+.menu-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 20px;
+  font-size: 13px;
+  color: var(--context-text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.menu-entry:hover {
+  background: var(--context-hover);
+  color: var(--accent-text);
+}
+
+.menu-shortcut {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 32px;
+}
+
+.menu-entry:hover .menu-shortcut {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.menu-separator {
+  height: 1px;
+  background: var(--context-border);
+  margin: 4px 8px;
+}
+
 #main-content {
   display: flex;
   flex: 1;

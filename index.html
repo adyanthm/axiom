@@ -11,6 +11,120 @@
 
 <body>
   <div id="app">
+    <!-- Top Menu Bar -->
+    <div id="menubar">
+      <div class="menu-item" data-menu="file">
+        <span class="menu-label">File</span>
+        <div class="menu-dropdown" id="menu-file">
+          <div class="menu-entry" data-action="new-file">
+            <span>New File</span><span class="menu-shortcut">Ctrl+N</span>
+          </div>
+          <div class="menu-entry" data-action="new-project">
+            <span>New Project...</span>
+          </div>
+          <div class="menu-separator"></div>
+          <div class="menu-entry" data-action="open-file">
+            <span>Open File...</span><span class="menu-shortcut">Ctrl+O</span>
+          </div>
+          <div class="menu-entry" data-action="open-folder">
+            <span>Open Folder...</span><span class="menu-shortcut">Ctrl+K Ctrl+O</span>
+          </div>
+          <div class="menu-entry" data-action="open-recent">
+            <span>Open Recent...</span>
+          </div>
+          <div class="menu-separator"></div>
+          <div class="menu-entry" data-action="close-editor">
+            <span>Close Editor</span><span class="menu-shortcut">Ctrl+W</span>
+          </div>
+          <div class="menu-separator"></div>
+          <div class="menu-entry" data-action="refresh-explorer">
+            <span>Refresh Explorer</span>
+          </div>
+        </div>
+      </div>
+      <div class="menu-item" data-menu="edit">
+        <span class="menu-label">Edit</span>
+        <div class="menu-dropdown" id="menu-edit">
+          <div class="menu-entry" data-action="undo">
+            <span>Undo</span><span class="menu-shortcut">Ctrl+Z</span>
+          </div>
+          <div class="menu-entry" data-action="redo">
+            <span>Redo</span><span class="menu-shortcut">Ctrl+Y</span>
+          </div>
+          <div class="menu-separator"></div>
+          <div class="menu-entry" data-action="cut">
+            <span>Cut</span><span class="menu-shortcut">Ctrl+X</span>
+          </div>
+          <div class="menu-entry" data-action="copy">
+            <span>Copy</span><span class="menu-shortcut">Ctrl+C</span>
+          </div>
+          <div class="menu-entry" data-action="paste">
+            <span>Paste</span><span class="menu-shortcut">Ctrl+V</span>
+          </div>
+          <div class="menu-separator"></div>
+          <div class="menu-entry" data-action="find">
+            <span>Find</span><span class="menu-shortcut">Ctrl+F</span>
+          </div>
+          <div class="menu-entry" data-action="replace">
+            <span>Replace</span><span class="menu-shortcut">Ctrl+H</span>
+          </div>
+        </div>
+      </div>
+      <div class="menu-item" data-menu="selection">
+        <span class="menu-label">Selection</span>
+        <div class="menu-dropdown" id="menu-selection">
+          <div class="menu-entry" data-action="select-all">
+            <span>Select All</span><span class="menu-shortcut">Ctrl+A</span>
+          </div>
+          <div class="menu-separator"></div>
+          <div class="menu-entry" data-action="add-cursor-next">
+            <span>Add Next Occurrence</span><span class="menu-shortcut">Ctrl+D</span>
+          </div>
+        </div>
+      </div>
+      <div class="menu-item" data-menu="view">
+        <span class="menu-label">View</span>
+        <div class="menu-dropdown" id="menu-view">
+          <div class="menu-entry" data-action="command-palette">
+            <span>Command Palette</span><span class="menu-shortcut">Ctrl+Shift+P</span>
+          </div>
+          <div class="menu-separator"></div>
+          <div class="menu-entry" data-action="keyboard-shortcuts">
+            <span>Keyboard Shortcuts</span><span class="menu-shortcut">Ctrl+K Ctrl+S</span>
+          </div>
+          <div class="menu-separator"></div>
+          <div class="menu-entry" data-action="toggle-glow">
+            <span>Toggle Neon Glow</span><span class="menu-shortcut">Ctrl+Alt+G</span>
+          </div>
+          <div class="menu-entry" data-action="toggle-rgb-glow">
+            <span>Toggle RGB Glow</span><span class="menu-shortcut">Ctrl+Alt+R</span>
+          </div>
+          <div class="menu-entry" data-action="toggle-rgb-text">
+            <span>Toggle RGB Text</span><span class="menu-shortcut">Ctrl+Alt+T</span>
+          </div>
+          <div class="menu-entry" data-action="toggle-zoom">
+            <span>Toggle 300% Zoom</span><span class="menu-shortcut">Ctrl+Alt+Z</span>
+          </div>
+        </div>
+      </div>
+      <div class="menu-item" data-menu="go">
+        <span class="menu-label">Go</span>
+        <div class="menu-dropdown" id="menu-go">
+          <div class="menu-entry" data-action="go-to-file">
+            <span>Go to File...</span><span class="menu-shortcut">Ctrl+P</span>
+          </div>
+        </div>
+      </div>
+      <div class="menu-item" data-menu="run">
+        <span class="menu-label">Run</span>
+        <div class="menu-dropdown" id="menu-run">
+          <div class="menu-entry" data-action="run-code">
+            <span>Run Code</span><span class="menu-shortcut">F5</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Main Content -->
     <div id="main-content">
       <!-- Sidebar -->
