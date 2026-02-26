@@ -1,8 +1,7 @@
 import './style.css';
-import { EditorState } from '@codemirror/state';
+import { EditorState, Compartment } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from '@codemirror/view';
 import { defaultKeymap, indentWithTab, history, historyKeymap } from '@codemirror/commands';
-import { python } from '@codemirror/lang-python';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { autocompletion } from '@codemirror/autocomplete';
 import { searchKeymap, search } from '@codemirror/search';
@@ -40,8 +39,45 @@ let isGlowEnabled    = false;
 let isRgbGlowEnabled = false;
 let isRgbTextEnabled = false;
 
+const languageBox = new Compartment();
+
+const languageMap = {
+  py:   () => import('@codemirror/lang-python').then(m => m.python()),
+  js:   () => import('@codemirror/lang-javascript').then(m => m.javascript()),
+  mjs:  () => import('@codemirror/lang-javascript').then(m => m.javascript()),
+  cjs:  () => import('@codemirror/lang-javascript').then(m => m.javascript()),
+  ts:   () => import('@codemirror/lang-javascript').then(m => m.javascript({ typescript: true })),
+  mts:  () => import('@codemirror/lang-javascript').then(m => m.javascript({ typescript: true })),
+  cts:  () => import('@codemirror/lang-javascript').then(m => m.javascript({ typescript: true })),
+  jsx:  () => import('@codemirror/lang-javascript').then(m => m.javascript({ jsx: true })),
+  tsx:  () => import('@codemirror/lang-javascript').then(m => m.javascript({ jsx: true, typescript: true })),
+  html: () => import('@codemirror/lang-html').then(m => m.html()),
+  ejs:  () => import('@codemirror/lang-html').then(m => m.html()),
+  css:  () => import('@codemirror/lang-css').then(m => m.css()),
+  cpp:  () => import('@codemirror/lang-cpp').then(m => m.cpp()),
+  c:    () => import('@codemirror/lang-cpp').then(m => m.cpp()),
+  h:    () => import('@codemirror/lang-cpp').then(m => m.cpp()),
+  hpp:  () => import('@codemirror/lang-cpp').then(m => m.cpp()),
+  go:   () => import('@codemirror/lang-go').then(m => m.go()),
+  rs:   () => import('@codemirror/lang-rust').then(m => m.rust()),
+  json: () => import('@codemirror/lang-json').then(m => m.json()),
+  md:   () => import('@codemirror/lang-markdown').then(m => m.markdown()),
+};
+
+async function getLanguageExtension(fileName) {
+  const ext = fileName.split('.').pop().toLowerCase();
+  if (languageMap[ext]) {
+    try {
+      return await languageMap[ext]();
+    } catch (e) {
+      console.error(`Failed to load language for .${ext}`, e);
+    }
+  }
+  return [];
+}
+
 // ── Editor Factory ─────────────────────────────────────────────────────────────
-function createEditorState(content) {
+function createEditorState(content, langExt = []) {
   return EditorState.create({
     doc: content,
     extensions: [
@@ -54,7 +90,7 @@ function createEditorState(content) {
       autocompletion(),
       search({ top: true }),
       keymap.of([...searchKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
-      python(),
+      languageBox.of(langExt),
       oneDark,
       EditorView.lineWrapping,
       EditorView.updateListener.of((update) => {
@@ -90,11 +126,16 @@ const view = new EditorView({
 function getFileIcon(name) {
   if (name.endsWith('.py'))   return '<i class="fa-brands fa-python" style="color:#4B8BBE;"></i>';
   if (name.endsWith('.json')) return '<i class="fa-solid fa-code" style="color:#e06c75;"></i>';
-  if (name.endsWith('.js'))   return '<i class="fa-brands fa-js" style="color:#F7DF1E;"></i>';
+  if (name.endsWith('.js') || name.endsWith('.mjs') || name.endsWith('.cjs')) return '<i class="fa-brands fa-js" style="color:#F7DF1E;"></i>';
+  if (name.endsWith('.ts') || name.endsWith('.mts') || name.endsWith('.cts')) return '<i class="fa-solid fa-code" style="color:#3178C6;"></i>';
+  if (name.endsWith('.jsx') || name.endsWith('.tsx')) return '<i class="fa-brands fa-react" style="color:#61DAFB;"></i>';
   if (name.endsWith('.css'))  return '<i class="fa-brands fa-css3-alt" style="color:#1572B6;"></i>';
-  if (name.endsWith('.html')) return '<i class="fa-brands fa-html5" style="color:#E34F26;"></i>';
+  if (name.endsWith('.html') || name.endsWith('.ejs')) return '<i class="fa-brands fa-html5" style="color:#E34F26;"></i>';
   if (name.endsWith('.md'))   return '<i class="fa-solid fa-file-lines" style="color:#6699CC;"></i>';
   if (name.endsWith('.txt'))  return '<i class="fa-solid fa-file-lines" style="color:#888;"></i>';
+  if (name.endsWith('.cpp') || name.endsWith('.hpp') || name.endsWith('.c') || name.endsWith('.h')) return '<i class="fa-solid fa-file-code" style="color:#00599C;"></i>';
+  if (name.endsWith('.go'))   return '<i class="fa-brands fa-golang" style="color:#00ADD8;"></i>';
+  if (name.endsWith('.rs'))   return '<i class="fa-brands fa-rust" style="color:#DEA584;"></i>';
   return '<i class="fa-solid fa-file" style="color:#888;"></i>';
 }
 
@@ -354,7 +395,8 @@ async function openFile(filePath) {
         fileContents.set(filePath, content);
       } catch (e) { console.error('Read failed:', e); return; }
     }
-    fileEditorStates.set(filePath, createEditorState(content));
+    const langExt = await getLanguageExtension(filePath);
+    fileEditorStates.set(filePath, createEditorState(content, langExt));
   }
 
   if (!openTabs.includes(filePath)) openTabs.push(filePath);
@@ -365,7 +407,8 @@ async function openFile(filePath) {
   const bc = document.getElementById('editor-breadcrumb');
   if (bc) bc.style.display = 'flex';
 
-  view.setState(fileEditorStates.get(filePath));
+  const state = fileEditorStates.get(filePath);
+  view.setState(state);
   updateBreadcrumb(filePath);
 
   document.querySelectorAll('.file-item').forEach(el =>
@@ -572,6 +615,17 @@ function startRename(filePath, isDir) {
 async function doRename(filePath, isDir, original, newName) {
   const parentPath = filePath.includes('/') ? filePath.split('/').slice(0, -1).join('/') : '';
   const newPath = parentPath ? `${parentPath}/${newName}` : newName;
+  const extChanged = filePath.split('.').pop().toLowerCase() !== newPath.split('.').pop().toLowerCase();
+
+  const updateStateLang = async (path) => {
+    const state = fileEditorStates.get(path);
+    if (state && extChanged) {
+      const langExt = await getLanguageExtension(path);
+      fileEditorStates.set(path, state.update({
+        effects: languageBox.reconfigure(langExt)
+      }).state);
+    }
+  };
 
   if (usingMemory && !isDir) {
     memFiles[newPath] = memFiles[filePath]; delete memFiles[filePath];
@@ -582,8 +636,12 @@ async function doRename(filePath, isDir, original, newName) {
     const state = fileEditorStates.get(filePath);
     if (state) { fileEditorStates.set(newPath, state); fileEditorStates.delete(filePath); }
     if (dirtyFiles.has(filePath)) { dirtyFiles.add(newPath); dirtyFiles.delete(filePath); }
+    await updateStateLang(newPath);
     renderExplorer(); renderTabs();
-    if (currentFile === newPath) updateBreadcrumb(newPath);
+    if (currentFile === newPath) {
+      view.setState(fileEditorStates.get(newPath));
+      updateBreadcrumb(newPath);
+    }
     return;
   }
 
@@ -606,8 +664,12 @@ async function doRename(filePath, isDir, original, newName) {
       const state = fileEditorStates.get(filePath);
       if (state) { fileEditorStates.set(newPath, state); fileEditorStates.delete(filePath); }
       if (dirtyFiles.has(filePath)) { dirtyFiles.add(newPath); dirtyFiles.delete(filePath); }
+      await updateStateLang(newPath);
       await refreshTree(); renderTabs();
-      if (currentFile === newPath) updateBreadcrumb(newPath);
+      if (currentFile === newPath) {
+        view.setState(fileEditorStates.get(newPath));
+        updateBreadcrumb(newPath);
+      }
     } catch (e) { console.error('Rename failed:', e); }
   } else {
     alert('Folder rename is not supported via the browser File System API.\nCreate a new folder and move files manually.');
