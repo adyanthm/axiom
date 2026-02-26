@@ -15,7 +15,7 @@
 
 <br/>
 
-<video src="./media/demo.mp4" autoplay loop muted width="100%"></video>
+![Axiom IDE Demo](./media/demo.gif)
 
 <br/>
 
@@ -50,7 +50,7 @@ And it's not just memory — Axiom IDE feels **~20× faster** in everyday use: i
 ### 🎨 Visual Effects
 Axiom IDE ships with a unique set of editor visual effects that make your coding sessions *actually look cool*. Toggle them any time via the Command Palette or keyboard shortcuts.
 
-<video src="./media/effects.mp4" autoplay loop muted width="100%"></video>
+![Effects Showcase](./media/effects.gif)
 
 | Effect | Shortcut | Description |
 |---|---|---|
@@ -67,7 +67,7 @@ All effects are **mutually exclusive** and toggle-able at any time with zero per
 
 Everything in Axiom IDE is accessible from the Command Palette — a VS Code-style quick-access panel that puts every action at your fingertips.
 
-<video src="./media/cmd.mp4" autoplay loop muted width="100%"></video>
+![Command Palette](./media/cmd.gif)
 
 | Mode | Shortcut | Usage |
 |---|---|---|
