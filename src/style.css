@@ -413,9 +413,17 @@ body {
   color: var(--text-main);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   white-space: nowrap;
   gap: 2px;
+  scrollbar-width: none;
+  /* Hide scrollbar Firefox */
+}
+
+.editor-breadcrumb::-webkit-scrollbar {
+  display: none;
+  /* Hide scrollbar Chrome/Safari */
 }
 
 .crumb-separator {

@@ -344,6 +344,8 @@ function renderTabs() {
   const c = document.getElementById('tabs-container');
   if (!c) return;
   c.innerHTML = '';
+  let activeTabEl = null;
+
   openTabs.forEach(fp => {
     const fn = fp.split('/').pop();
     const dirty = dirtyFiles.has(fp);
@@ -354,7 +356,14 @@ function renderTabs() {
     div.addEventListener('click', e => { if (!e.target.closest('.tab-close-btn')) openFile(fp); });
     div.querySelector('.tab-close-btn').addEventListener('click', e => { e.stopPropagation(); closeTab(fp); });
     c.appendChild(div);
+    if (fp === currentFile) activeTabEl = div;
   });
+
+  if (activeTabEl) {
+    requestAnimationFrame(() => {
+      activeTabEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    });
+  }
 }
 
 function patchTabDirty(fp) {
@@ -681,15 +690,128 @@ function updateBreadcrumb(filePath) {
   const bc = document.getElementById('editor-breadcrumb');
   if (!bc) return;
   const parts = filePath.split('/');
+  // all = [root, dir1, dir2, ..., fileName]
   const all = [rootName, ...parts];
-  bc.innerHTML = all.map((p, i) => {
-    const isLast = i === all.length - 1;
-    const isRoot = i === 0;
-    const icon = isLast
-      ? getFileIcon(p)
-      : (isRoot ? '' : '<i class="fa-solid fa-folder" style="color:#E8AB4F;font-size:11px;"></i>');
-    return `<span class="crumb${isLast ? ' current-file-crumb' : ''}">${icon ? icon + ' ' : ''}${p}</span>${!isLast ? '<i class="fa-solid fa-chevron-right crumb-separator"></i>' : ''}`;
+  
+  // Smart rendering: if path is too long, we keep root and fileName, and abbreviate middle parts
+  const MAX_VISIBLE = 4; // Max parts to show before using ellipsis
+  let displayParts = [...all];
+  
+  if (all.length > MAX_VISIBLE) {
+    // Keep first (root) and last two (parent + file), or just root and file
+    // and replace middle with ...
+    const root = all[0];
+    const fileName = all[all.length - 1];
+    const parentDir = all[all.length - 2];
+    
+    // Structure: [root, '...', parentDir, fileName]
+    displayParts = [root, '...', parentDir, fileName];
+  }
+
+  bc.innerHTML = displayParts.map((p, i) => {
+    const isLast = i === displayParts.length - 1;
+    const isEllipsis = p === '...';
+    const isRoot = i === 0 && !isEllipsis;
+    
+    // Find the original index for path reconstruction
+    const originalIdx = isEllipsis ? -1 : (i === 0 ? 0 : (i === 1 ? (all.length > MAX_VISIBLE ? -1 : 1) : (all.length > MAX_VISIBLE ? all.length - (displayParts.length - i) : i)));
+    // For the breadcrumb path, we want the path up to that directory
+    // If it's root, path is empty string ''. If it's a file, it's the full path.
+    const partPath = originalIdx >= 0 ? all.slice(1, originalIdx + 1).join('/') : null;
+
+    let icon = '';
+    if (isLast) {
+      icon = getFileIcon(p);
+    } else if (!isEllipsis && !isRoot) {
+      icon = '<i class="fa-solid fa-folder" style="color:#E8AB4F;font-size:11px;"></i>';
+    } else if (isRoot) {
+      icon = '<i class="fa-solid fa-home" style="color:var(--text-muted);font-size:11px;"></i>';
+    }
+
+    const crumbClass = isLast ? 'crumb current-file-crumb' : 'crumb';
+    const separator = i < displayParts.length - 1 ? '<i class="fa-solid fa-chevron-right crumb-separator"></i>' : '';
+    
+    return `<span class="${crumbClass}" data-path="${partPath || ''}" data-root="${isRoot}">${icon ? icon + ' ' : ''}${p}</span>${separator}`;
   }).join('');
+
+  // Add click listeners for VS Code style dropdown behavior
+  bc.querySelectorAll('.crumb').forEach(el => {
+    el.addEventListener('click', e => {
+      e.stopPropagation();
+      const path = el.dataset.path;
+      const isRoot = el.dataset.root === 'true';
+      const rect = el.getBoundingClientRect();
+      renderBreadcrumbDropdown(rect.left, rect.bottom, isRoot ? '' : path);
+    });
+  });
+
+  // Auto-scroll to end to ensure the current file is always visible
+  requestAnimationFrame(() => {
+    bc.scrollLeft = bc.scrollWidth;
+  });
+}
+
+function renderBreadcrumbDropdown(x, y, path) {
+  hideCtxMenu(); // Close any other menus
+  ctxMenu.innerHTML = '';
+  
+  let targetNodes = [];
+  if (path === '') {
+    targetNodes = fileTree ? fileTree.children : [];
+  } else {
+    // Find directory in handles or tree
+    const targetDir = dirHandles.get(path);
+    if (!targetDir) return;
+    
+    // We need the children. If already in tree, use that, else we might need to scan (simpler to use tree for now)
+    const findInTree = (nodes, p) => {
+      for (const n of nodes) {
+        if (n.path === p) return n.children;
+        if (n.children) {
+          const res = findInTree(n.children, p);
+          if (res) return res;
+        }
+      }
+      return null;
+    };
+    targetNodes = findInTree(fileTree.children, path) || [];
+  }
+
+  if (targetNodes.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'context-item';
+    empty.style.opacity = '0.5';
+    empty.innerHTML = '<span>Empty</span>';
+    ctxMenu.appendChild(empty);
+  }
+
+  targetNodes.forEach(node => {
+    const d = document.createElement('div');
+    d.className = 'context-item';
+    const icon = node.type === 'directory' 
+      ? '<i class="fa-solid fa-folder" style="color:#E8AB4F;"></i>' 
+      : getFileIcon(node.name);
+    d.innerHTML = `${icon}<span>${node.name}</span>`;
+    d.addEventListener('click', e => {
+      e.stopPropagation();
+      hideCtxMenu();
+      if (node.type === 'file') {
+        openFile(node.path);
+      } else {
+        // For directories in breadcrumb, we could expand them in explorer or show nested dropdown
+        // For now, let's just open the explorer to that path
+        if (!expandedDirs.has(node.path)) {
+          expandedDirs.add(node.path);
+          renderExplorer();
+        }
+      }
+    });
+    ctxMenu.appendChild(d);
+  });
+
+  ctxMenu.style.left = x + 'px';
+  ctxMenu.style.top = y + 'px';
+  ctxMenu.classList.remove('hidden');
 }
 
 // ── Welcome Screen ──────────────────────────────────────────────────────────────
@@ -1087,6 +1209,16 @@ window.addEventListener('keydown', async e => {
 });
 
 // ── Init ────────────────────────────────────────────────────────────────────────
+const tabsContainer = document.getElementById('tabs-container');
+if (tabsContainer) {
+  tabsContainer.addEventListener('wheel', (e) => {
+    if (e.deltaY !== 0 && !e.shiftKey) {
+      e.preventDefault();
+      tabsContainer.scrollLeft += e.deltaY;
+    }
+  }, { passive: false });
+}
+
 showWelcome(true);
 renderExplorer();
 renderTabs();
